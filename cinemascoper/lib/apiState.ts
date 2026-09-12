@@ -81,6 +81,14 @@ export async function buildState() {
         // sessions are grouped everywhere else (see sydneyDateKey).
         isReleaseDay: Boolean(releaseDate) && sydneyDateKey(new Date(s.startsAt)) === releaseDate.slice(0, 10),
         isReRelease: isReRelease(releaseDate, s.startsAt),
+        // "See if a screening is a special preview" — a session scheduled
+        // on a Sydney calendar date *before* the movie's own official
+        // release date reads as a preview (an early/sneak screening ahead
+        // of the wide release), same "compare Sydney calendar dates"
+        // approach as isReleaseDay above. A blank releaseDate (unknown —
+        // e.g. a scraper-discovered title with no TMDB match) can't be a
+        // preview of anything, since there's no release date to be ahead of.
+        isPreview: Boolean(releaseDate) && sydneyDateKey(new Date(s.startsAt)) < releaseDate.slice(0, 10),
         ticketPurchased: purchasedIds.has(s.id),
       };
     })

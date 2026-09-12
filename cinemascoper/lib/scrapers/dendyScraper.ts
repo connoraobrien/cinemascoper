@@ -1,7 +1,8 @@
-import { Session } from "../types";
+import { Movie, Session } from "../types";
 import { makeId } from "../ids";
 import { CinemaScraper } from "./types";
-import { slugifyTitle } from "./titleMatch";
+import { titlesMatch } from "./titleMatch";
+import { resolveShadowMovie } from "./shadowMovies";
 
 /**
  * Dendy. Every venue runs on its own subdomain (newtown.dendy.com.au,
@@ -9,8 +10,20 @@ import { slugifyTitle } from "./titleMatch";
  * `Cinema.providerId` is that subdomain (e.g. "newtown"). Reverse-engineered
  * from what the venue's own site calls:
  *
- *  - `findMovieBySlug(urlSlug: String!, siteIds: [ID])` resolves a movie
- *    by its URL slug (e.g. "practical-magic-2") to its Dendy movie id.
+ *  - `movies(type: "now-playing-and-coming-soon", …)` — the venue's *whole*
+ *    current lineup in one call: `{ data: { id, name, urlSlug }[], count }`.
+ *    Found by patching `window.fetch` in a real browser and clicking through
+ *    the "Now Playing"/"Coming Soon" tabs (introspection is disabled on this
+ *    schema, `__schema` is rejected outright, so this couldn't be found by
+ *    asking the API directly) — confirmed live, returns every movie
+ *    currently listed at the venue including retrospective/one-off titles,
+ *    each with its own real `id` (so `findMovieBySlug` is no longer needed
+ *    at all: this query already hands back the id `showingsForDate` wants).
+ *    This is what makes Dendy a full-listing scraper now, same as
+ *    Hoyts/Event/flicks — previously it only ever asked about
+ *    `candidateMovies` via a guessed slug, so an untracked title (an old
+ *    catalogue re-release, a one-off event) never surfaced here even if it
+ *    was genuinely showing.
  *  - `showingsForDate(movieId, siteIds, resultVersion, …)` returns every
  *    upcoming showing for that movie at this venue: `{ id, time,
  *    seatsRemaining, … }[]`. `time` is already a UTC ISO string (`"Z"`
@@ -43,12 +56,6 @@ import { slugifyTitle } from "./titleMatch";
  * by actually clicking one and reading `window.location.href` — where
  * `<id>` is `showingsForDate`'s own `data[].id` (its separate `showingId`
  * field is null in practice and isn't what the URL uses, despite the name).
- *
- * We don't have Dendy's own movie-listing endpoint reverse-engineered, so
- * matching relies on guessing each candidate's slug via `slugifyTitle` —
- * confirmed to work for at least one real title ("Practical Magic 2" ->
- * "practical-magic-2"); a miss just means "doesn't look like it's
- * showing here" rather than an error.
  */
 
 const CIRCUIT_ID = "15";
@@ -61,9 +68,30 @@ const SITE_IDS: Record<string, string> = {
   southport: "37",
 };
 
-const FIND_MOVIE_QUERY = `query ($urlSlug: String!, $siteIds: [ID]) {
-  findMovieBySlug(urlSlug: $urlSlug, siteIds: $siteIds) {
-    id
+// Verbatim from a real page load (captured via a `window.fetch` patch while
+// clicking the "Now Playing"/"Coming Soon" tabs) — the whole current
+// lineup for a venue in one call.
+const MOVIES_QUERY = `query ($limit: Int, $orderBy: String, $descending: Boolean, $searchString: String, $siteIds: [ID], $currentMovieId: ID, $movieIdsToExclude: [ID], $titleClassId: ID, $titleClassIds: [ID], $type: String, $subtype: String) {
+  movies(
+    limit: $limit
+    orderBy: $orderBy
+    descending: $descending
+    searchString: $searchString
+    siteIds: $siteIds
+    currentMovieId: $currentMovieId
+    movieIdsToExclude: $movieIdsToExclude
+    titleClassId: $titleClassId
+    titleClassIds: $titleClassIds
+    type: $type
+    subtype: $subtype
+  ) {
+    data {
+      id
+      name
+      urlSlug
+      __typename
+    }
+    count
     __typename
   }
 }`;
@@ -102,6 +130,12 @@ const SHOWINGS_QUERY = `query ($ids: [ID], $movieId: ID, $movieIds: [ID], $title
   }
 }`;
 
+interface DendyMovie {
+  id: string;
+  name: string;
+  urlSlug: string;
+}
+
 async function graphql<T>(
   subdomain: string,
   siteId: string,
@@ -132,25 +166,42 @@ async function graphql<T>(
 export const dendyScraper: CinemaScraper = {
   name: "Dendy (dendy.com.au GraphQL)",
 
-  async discoverNewSessions({ cinema, candidateMovies, existingSessions, now }) {
+  async discoverNewSessions({ cinema, allKnownMovies, existingSessions, now }) {
     const subdomain = cinema.providerId;
     const siteId = SITE_IDS[subdomain];
     if (!subdomain || !siteId) return { sessions: [], shadowMovies: [] };
 
-    // Like Ritz Randwick, this asks about one candidate movie at a time
-    // (no "what's on" listing endpoint reverse-engineered for Dendy — see
-    // the doc comment above), so it never creates shadow movies itself.
+    const lineup = await graphql<{ movies: { data: DendyMovie[] } }>(subdomain, siteId, MOVIES_QUERY, {
+      limit: 100,
+      orderBy: "magic",
+      descending: false,
+      searchString: "",
+      siteIds: [],
+      currentMovieId: null,
+      movieIdsToExclude: null,
+      titleClassId: null,
+      titleClassIds: null,
+      type: "now-playing-and-coming-soon",
+      subtype: "watched",
+    });
+    const dendyMovies = lineup?.movies?.data ?? [];
+
     const discovered: Session[] = [];
+    const knownForMatch = [...allKnownMovies];
+    const shadowMovies: Movie[] = [];
 
-    for (const movie of candidateMovies) {
-      const slug = slugifyTitle(movie.title);
-
-      const found = await graphql<{ findMovieBySlug: { id: string } | null }>(subdomain, siteId, FIND_MOVIE_QUERY, {
-        urlSlug: slug,
-        siteIds: [],
-      });
-      const dendyMovieId = found?.findMovieBySlug?.id;
-      if (!dendyMovieId) continue;
+    for (const dendyMovie of dendyMovies) {
+      // Match against everything known, not just this tick's near-term
+      // candidates — see the doc comment on `discoverNewSessions` in
+      // lib/scrapers/types.ts.
+      let movie = knownForMatch.find((m) => titlesMatch(m.title, dendyMovie.name));
+      if (!movie) {
+        movie = resolveShadowMovie(dendyMovie.name, knownForMatch);
+        if (!knownForMatch.some((m) => m.id === movie!.id)) {
+          knownForMatch.push(movie);
+          shadowMovies.push(movie);
+        }
+      }
 
       // Full variable set, matching the exact confirmed-working shape the
       // real site sent (see doc comment above) — `resultVersion: null` in
@@ -159,7 +210,7 @@ export const dendyScraper: CinemaScraper = {
         showingsForDate: { data: { id: string; time: string }[] | null };
       }>(subdomain, siteId, SHOWINGS_QUERY, {
         ids: [],
-        movieId: dendyMovieId,
+        movieId: dendyMovie.id,
         movieIds: [],
         titleClassId: null,
         titleClassIds: null,
@@ -176,7 +227,7 @@ export const dendyScraper: CinemaScraper = {
         const startsAtIso = startsAt.toISOString();
 
         const alreadyKnown = [...existingSessions, ...discovered].some(
-          (s) => s.movieId === movie.id && s.cinemaId === cinema.id && s.startsAt === startsAtIso
+          (s) => s.movieId === movie!.id && s.cinemaId === cinema.id && s.startsAt === startsAtIso
         );
         if (alreadyKnown) continue;
 
@@ -192,6 +243,6 @@ export const dendyScraper: CinemaScraper = {
       }
     }
 
-    return { sessions: discovered, shadowMovies: [] };
+    return { sessions: discovered, shadowMovies };
   },
 };

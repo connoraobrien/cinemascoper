@@ -23,17 +23,21 @@ of the box.
 - **Sessions** — every upcoming session at your cinemas, not just what's on
   your watchlist (including special/revival screenings a cinema shows that
   never matched a tracked movie — see "Shadow movies" below), filterable by
-  film, director, one-or-many cinemas, a date range, format, new-release vs.
-  re-release, and time of day, with a one-tap "only my watchlist" toggle. A
-  session on a film's actual release day is flagged so it's easy to spot.
+  film, director, cinema (a real multi-select dropdown, not a row of
+  chips), format (same), a date range, new-release vs. re-release, and time
+  of day, with a one-tap "only my watchlist" toggle. A day with a release
+  happening is flagged right on its date heading, and an individual
+  screening ahead of a movie's official release day is flagged as a
+  "Preview".
 - **Releases** (Release Radar) — browse upcoming releases (tiles, a
-  date-grouped list, or a real month calendar; TBA titles sort to the
-  bottom, not the top), filter by release type, "Mainstream only", or "New
-  releases only" (hides old catalogue titles you've added), search by
-  title or director, tap a tile to preview its session times without
-  committing to your watchlist, and search all of TMDB (by title or
-  director, including already-released films) to add anything the discover
-  window missed.
+  date-grouped list, or a real month calendar — a busy day's "+N more" is
+  clickable, opening every release for that day rather than cutting off at
+  3; TBA titles sort to the bottom, not the top), filter by release type,
+  "Mainstream only", or "New releases only" (hides old catalogue titles
+  you've added), search by title or director, tap a tile to preview its
+  session times without committing to your watchlist, and search all of
+  TMDB (by title or director, including already-released films) to add
+  anything the discover window missed.
 - **Watchlist** — every tracked movie's sessions, organised by day and
   noting cinema + format, with ticket links and trailers; filter by
   cinema/date (with quick presets — today, this week, this weekend, next 30
@@ -55,25 +59,32 @@ of the box.
 
 ### Shadow movies — sessions for titles CinemaScoper doesn't otherwise know
 
-Three providers (Hoyts, Event Cinemas, flicks.com.au) fetch a cinema's whole
-current lineup rather than asking about one movie at a time. When one of
-those lists a title that doesn't match anything in the TMDB catalogue, the
-watchlist, or a manually-added movie — an old catalogue title getting a
-revival screening, a one-off special event like a 70mm season — CinemaScoper
-auto-registers a minimal placeholder for it (see
-`lib/scrapers/shadowMovies.ts`) so its sessions still show up in the
-Sessions tab, rather than being silently dropped. These placeholders have no
-real poster/synopsis/release date, so they're deliberately left out of
-Release Radar and the trackable-movie lists — they're for "what's actually
-on", not for tracking.
+Every provider now fetches a cinema's whole current lineup rather than
+asking about one movie at a time — Ritz Randwick, Dendy, and Golden Age
+Cinema & Bar joined Hoyts/Event/flicks in this once each venue's own
+site-wide "what's on" listing was reverse-engineered (see the table below).
+When one of those lists a title that doesn't match anything in the TMDB
+catalogue, the watchlist, or a manually-added movie — an old catalogue
+title getting a revival screening, a one-off special event like the Ritz's
+"Celluloid Dreams" 70mm seasons, or a retrospective like a Golden Age
+Mulholland Drive screening — CinemaScoper auto-registers a minimal
+placeholder for it (see `lib/scrapers/shadowMovies.ts`) so its sessions
+still show up in the Sessions tab, rather than being silently dropped or
+(the old failure mode for those three venues specifically) never even
+being asked about. These placeholders have no real poster/synopsis/release
+date, so they're deliberately left out of Release Radar and the
+trackable-movie lists — they're for "what's actually on", not for
+tracking, and their sessions read as re-releases by default (see
+`isReRelease` in `lib/dateUtils.ts`) since there's no real release date to
+compare against.
 
-Ritz Randwick, Dendy and Golden Age Cinema & Bar don't have this: their
-sites only expose a per-movie lookup (no "what's on today" listing to
-reverse-engineer), so they can only ever report sessions for a movie
-CinemaScoper already knows to ask about. A revival screening at one of
-those three venues (the Ritz's "Celluloid Dreams" 70mm seasons, say) still
-needs that title added — a manual "search all of TMDB and add" is the way
-to make sure it's asked about.
+Every real cinema integration is still capped at whatever booking window
+that venue's own site actually opens — typically about a week (Ritz,
+Dendy) up to a couple of weeks (Event/IMAX, following whatever `Data.Dates`
+that API itself offers). A special screening dated further out than that
+genuinely won't appear yet; it'll surface once the venue's own booking
+window reaches it, the same real limitation as any human checking that
+venue's site today.
 
 ## Getting started
 
@@ -218,17 +229,23 @@ its own doc comment.
 | --- | --- | --- |
 | `hoyts` | Any Hoyts cinema | `apim-aea.hoyts.com.au`'s own JSON API |
 | `event` | Any Event Cinemas venue, including IMAX Sydney (its own venue, not part of George Street) | `eventcinemas.com.au`'s own `GetSessions` JSON endpoint |
-| `dendy` | Newtown, Canberra, Coorparoo, Portside, Southport | Each venue's own `<subdomain>.dendy.com.au/graphql` |
-| `golden-age` | Golden Age Cinema & Bar, Surry Hills (fixed, single venue) | `ourgoldenage.com.au`'s "Ferve" ticketing widget API |
-| `ritz-randwick` | Ritz Randwick (fixed, single venue) | Session times embedded directly in `ritzcinemas.com.au`'s own HTML |
+| `dendy` | Newtown, Canberra, Coorparoo, Portside, Southport | Each venue's own `<subdomain>.dendy.com.au/graphql` — a `movies(type: "now-playing-and-coming-soon")` query for the whole lineup, then `showingsForDate` per movie |
+| `golden-age` | Golden Age Cinema & Bar, Surry Hills (fixed, single venue) | `ourgoldenage.com.au/films/now-showing` for the whole lineup, then each film's own page + the "Ferve" ticketing widget API for its times |
+| `ritz-randwick` | Ritz Randwick (fixed, single venue) | `ritzcinemas.com.au`'s own day-tabbed `/now-showing` listing (today, tomorrow, and the next 5 calendar days by weekday name) — every movie showing each day, with the day known from which URL was fetched |
 | `flicks` | Any other Australian cinema | flicks.com.au's public per-day session pages — the universal fallback that makes "add any cinema" actually work for the ~400 AU cinemas that don't have a bespoke integration above |
 
 A few of these lean on best-effort heuristics rather than something the
-site states outright (matching a tracked movie to a title string the
-venue uses; for Ritz Randwick, inferring which calendar day a session
-falls on from where the times "wrap around" in an undated list) — each is
+site states outright — chiefly matching a tracked movie to whatever title
+string the venue itself uses (see `lib/scrapers/titleMatch.ts`) — each is
 explained where it's implemented, and a miss just means "didn't find a
-session" rather than a crash.
+session" rather than a crash. The Ritz Randwick scraper in particular used
+to infer which calendar day a session fell on from where times "wrapped
+around" in an undated list — a heuristic that turned out to genuinely
+double sessions up and misattribute them to the wrong day whenever the real
+ordering wasn't perfectly monotonic. It's since been rewritten to fetch
+each day from that day's own explicit URL instead (see the doc comment on
+`lib/scrapers/ritzRandwickScraper.ts`), which removes the inference
+entirely rather than tuning it.
 
 Event Cinemas' own `GetSessions` endpoint only opens bookings so far ahead
 of time in the first place, but this scraper now follows however many dates
@@ -236,6 +253,16 @@ it actually offers (up to a generous cap) rather than an artificially tight
 one — if IMAX/Event sessions still don't reach as far out as the venue's own
 site shows, that's Event's own booking window, not a limit CinemaScoper is
 imposing.
+
+**Formats** (`SessionFormat` in `lib/types.ts`) now cover 2D, 3D, IMAX,
+VMAX, 4DX, Dolby Cinema, Gold Class, Subtitled, 70mm, and Extreme Screen.
+VMAX used to fold into "IMAX" in `eventScraper.ts` (the closest fit at the
+time) — it's now its own distinct value there, since it's a visually and
+technically different large-format brand. 4DX and Dolby Cinema detection on
+Hoyts/Ritz is a best-effort keyword match, not confirmed against a real
+live example of either at those venues yet (no example seen in testing) —
+worth a look after your first deploy if either of those runs at a cinema
+you've added.
 
 ### Movie data — TMDB
 

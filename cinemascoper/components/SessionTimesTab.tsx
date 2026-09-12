@@ -5,6 +5,7 @@ import { Cinema, JoinedSession, SessionFormat } from "@/lib/clientTypes";
 import { SectionHeading, Chip } from "./ui";
 import { SearchIcon } from "./Icons";
 import { SessionList } from "./SessionList";
+import { MultiSelectDropdown } from "./MultiSelectDropdown";
 import { sydneyTimeOfDayMinutes } from "@/lib/scrapers/sydneyTime";
 
 type ReleaseKindFilter = "all" | "new" | "re-release";
@@ -18,12 +19,14 @@ function timeStringToMinutes(t: string): number | null {
 
 /**
  * "Upcoming times at your cinemas" — every session at a cinema you're
- * tracking, filterable every way Connor asked for: cinema (multi-select,
- * via toggleable chips rather than a fiddly native multiselect box),
- * film, director, date range, format, new-release-vs-re-release, and time
- * of day — plus a one-tap "only films on my watchlist" toggle, so the same
- * tab covers both "what's on at my cinemas generally" and "what's on for
- * what I'm following", per Connor's ask.
+ * tracking, filterable every way Connor asked for: cinema (a real
+ * multi-select dropdown — see `MultiSelectDropdown` — rather than a row of
+ * toggle chips, which got "chunky" once there were more than a few
+ * cinemas), format (same dropdown treatment), film, director, date range,
+ * new-release-vs-re-release, and time of day — plus a one-tap "only films
+ * on my watchlist" toggle, so the same tab covers both "what's on at my
+ * cinemas generally" and "what's on for what I'm following", per Connor's
+ * ask.
  */
 export function SessionTimesTab({
   sessions,
@@ -45,7 +48,7 @@ export function SessionTimesTab({
   const [toDate, setToDate] = useState("");
   const [fromTime, setFromTime] = useState("");
   const [toTime, setToTime] = useState("");
-  const [formatFilter, setFormatFilter] = useState<"all" | SessionFormat>("all");
+  const [selectedFormats, setSelectedFormats] = useState<Set<SessionFormat>>(new Set());
   const [releaseKind, setReleaseKind] = useState<ReleaseKindFilter>("all");
   const [watchlistOnly, setWatchlistOnly] = useState(false);
 
@@ -54,15 +57,6 @@ export function SessionTimesTab({
     for (const s of sessions) set.add(s.format);
     return [...set].sort();
   }, [sessions]);
-
-  const toggleCinema = (id: string) => {
-    setSelectedCinemaIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
 
   const fromMinutes = timeStringToMinutes(fromTime);
   const toMinutes = timeStringToMinutes(toTime);
@@ -75,7 +69,7 @@ export function SessionTimesTab({
       if (d && !(s.movieDirector ?? "").toLowerCase().includes(d)) return false;
       if (selectedCinemaIds.size > 0 && !selectedCinemaIds.has(s.cinemaId)) return false;
       if (watchlistOnly && !watchlistIds.has(s.movieId)) return false;
-      if (formatFilter !== "all" && s.format !== formatFilter) return false;
+      if (selectedFormats.size > 0 && !selectedFormats.has(s.format)) return false;
       if (releaseKind === "new" && s.isReRelease) return false;
       if (releaseKind === "re-release" && !s.isReRelease) return false;
       const dateKey = s.startsAt.slice(0, 10);
@@ -93,7 +87,7 @@ export function SessionTimesTab({
     selectedCinemaIds,
     watchlistOnly,
     watchlistIds,
-    formatFilter,
+    selectedFormats,
     releaseKind,
     fromDate,
     toDate,
@@ -106,7 +100,7 @@ export function SessionTimesTab({
     directorFilter ||
     selectedCinemaIds.size > 0 ||
     watchlistOnly ||
-    formatFilter !== "all" ||
+    selectedFormats.size > 0 ||
     releaseKind !== "all" ||
     fromDate ||
     toDate ||
@@ -121,7 +115,7 @@ export function SessionTimesTab({
     setToDate("");
     setFromTime("");
     setToTime("");
-    setFormatFilter("all");
+    setSelectedFormats(new Set());
     setReleaseKind("all");
     setWatchlistOnly(false);
   };
@@ -152,30 +146,26 @@ export function SessionTimesTab({
         </Chip>
       </div>
 
-      {myCinemas.length > 0 && (
-        <div className="mb-3 flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-xs font-medium text-base-500">Cinemas:</span>
-          {myCinemas.map((c) => (
-            <Chip key={c.id} active={selectedCinemaIds.has(c.id)} onClick={() => toggleCinema(c.id)}>
-              {c.name}
-            </Chip>
-          ))}
-        </div>
-      )}
-
-      {availableFormats.length > 1 && (
-        <div className="mb-4 flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-xs font-medium text-base-500">Format:</span>
-          <Chip active={formatFilter === "all"} onClick={() => setFormatFilter("all")}>
-            All
-          </Chip>
-          {availableFormats.map((f) => (
-            <Chip key={f} active={formatFilter === f} onClick={() => setFormatFilter(f)}>
-              {f}
-            </Chip>
-          ))}
-        </div>
-      )}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {myCinemas.length > 0 && (
+          <MultiSelectDropdown
+            label="Cinemas"
+            allLabel="All cinemas"
+            options={myCinemas.map((c) => ({ id: c.id, label: c.name }))}
+            selected={selectedCinemaIds}
+            onChange={setSelectedCinemaIds}
+          />
+        )}
+        {availableFormats.length > 1 && (
+          <MultiSelectDropdown
+            label="Format"
+            allLabel="All formats"
+            options={availableFormats.map((f) => ({ id: f, label: f }))}
+            selected={selectedFormats}
+            onChange={(next) => setSelectedFormats(next as Set<SessionFormat>)}
+          />
+        )}
+      </div>
 
       <div className="mb-5 flex flex-wrap items-end gap-2">
         <div className="relative">

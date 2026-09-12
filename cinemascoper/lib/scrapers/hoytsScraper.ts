@@ -34,14 +34,24 @@ import { resolveShadowMovie } from "./shadowMovies";
 const API_BASE = "https://apim-aea.hoyts.com.au/cinemaapi-au-live/api";
 
 function mapFormat(typeId: string | undefined): SessionFormat {
-  switch (typeId) {
+  const s = (typeId ?? "").toUpperCase();
+  switch (s) {
     case "XTREME":
       return "Extreme Screen"; // Hoyts' own large-format brand (Xtremescreen) — distinct from IMAX
     case "LUX":
       return "Gold Class";
-    default:
-      return "2D";
+    case "IMAX":
+      return "IMAX";
   }
+  // Not confirmed against a live Hoyts typeId (no example seen yet), but
+  // several Hoyts venues do run 4DX and Dolby Cinema screens, so a
+  // best-effort substring match is worth having rather than silently
+  // folding them into plain "2D" — same caveat as ritzRandwickScraper's
+  // mapFormat: treat a miss here as "not modelled yet", not as evidence the
+  // format doesn't exist at this cinema.
+  if (s.includes("4DX")) return "4DX";
+  if (s.includes("DOLBY")) return "Dolby Cinema";
+  return "2D";
 }
 
 interface HoytsMovie {

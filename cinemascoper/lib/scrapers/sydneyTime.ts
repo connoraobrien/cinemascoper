@@ -133,6 +133,20 @@ export function sydneyTimeOfDayMinutes(date: Date): number {
   return (get("hour") % 24) * 60 + get("minute");
 }
 
+const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+/** The lowercase English weekday name (e.g. "monday") for a UTC instant, *as read on a clock in
+ * Sydney* — backs ritzRandwickScraper's day-tab URLs (`/now-showing/<weekday>`), which name a day
+ * of the week rather than a date. Computed from the actual calendar weekday rather than assumed
+ * from position in a list — see that scraper's doc comment for why: the site's own day-tab set
+ * isn't a fixed 7-slot window, so "day index 3" doesn't reliably mean any particular weekday. */
+export function sydneyWeekdayName(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: SYDNEY_TZ, weekday: "long" }).formatToParts(date);
+  const raw = parts.find((p) => p.type === "weekday")?.value ?? "";
+  const lower = raw.toLowerCase();
+  return WEEKDAYS.includes(lower) ? lower : raw; // fallback is purely defensive; Intl always returns a real weekday name
+}
+
 /** Infers the year for a "D Mon" (or similar) date with no year given,
  * assuming it's meant to be soon (never more than ~2 months in the past
  * relative to `now` — handles the December/January rollover). */

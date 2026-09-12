@@ -43,9 +43,14 @@ const MAX_DATES_PER_POLL = 28;
 
 function mapFormat(screenTypeName: string | undefined): SessionFormat {
   const s = (screenTypeName ?? "").toLowerCase();
+  // Checked before the plain "imax" test below, since "imax" alone would
+  // otherwise also match e.g. "VMAX" was never actually a substring match —
+  // this is just keeping the more specific brands first for clarity.
+  if (s.includes("vmax")) return "VMAX"; // Event's own large-format brand — now modelled distinctly rather than folded into IMAX
   if (s.includes("imax")) return "IMAX";
+  if (s.includes("4dx")) return "4DX";
+  if (s.includes("dolby")) return "Dolby Cinema";
   if (s.includes("gold")) return "Gold Class";
-  if (s.includes("vmax")) return "IMAX"; // Event's own large-format brand — closest fit we model
   if (s.includes("70mm") || s.includes("70 mm")) return "70mm";
   if (s.includes("extreme")) return "Extreme Screen";
   if (s.includes("subtitle")) return "Subtitled";

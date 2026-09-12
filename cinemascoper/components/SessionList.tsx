@@ -58,13 +58,32 @@ export function SessionList({
         const monthYear = monthYearLabel(group.dateKey);
         const showMonthYear = monthYear !== lastMonthYear;
         lastMonthYear = monthYear;
+        // "The 'release day' tab that comes up next to screenings... appears
+        // next to the date and not the session time" — moved here, beside
+        // the day heading, rather than inline on every row next to the
+        // time/format. Shown whenever at least one session that day is its
+        // movie's release day — exactly right for a single-movie list (the
+        // Watchlist detail panel, the Release Radar preview), and still a
+        // meaningful "something releasing today" signal on a multi-movie
+        // list like Session Times.
+        const groupHasReleaseDay = group.sessions.some((s) => s.isReleaseDay);
 
         return (
           <div key={group.dateKey}>
             {showMonthYear && (
               <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-base-600">{monthYear}</p>
             )}
-            <p className="mb-1.5 text-xs font-medium text-base-400">{formatDayLabel(group.dateKey)}</p>
+            <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-base-400">
+              {formatDayLabel(group.dateKey)}
+              {groupHasReleaseDay && (
+                <span
+                  title="One or more movies below release today"
+                  className="rounded-full border border-accent-dim/40 bg-accent-soft px-1.5 py-0.5 text-[11px] font-medium text-accent"
+                >
+                  Release day
+                </span>
+              )}
+            </p>
             <ul className="flex flex-col gap-1.5">
               {group.sessions.map((s) => (
                 <li
@@ -92,12 +111,12 @@ export function SessionList({
                     <span className="rounded-full border border-base-700 bg-base-900 px-1.5 py-0.5 text-[11px] text-base-400">
                       {s.format}
                     </span>
-                    {s.isReleaseDay && (
+                    {s.isPreview && (
                       <span
-                        title="This is the film's official release day"
-                        className="rounded-full border border-accent-dim/40 bg-accent-soft px-1.5 py-0.5 text-[11px] font-medium text-accent"
+                        title="Screening ahead of this film's official release day — a sneak preview"
+                        className="rounded-full border border-violet-700/40 bg-violet-950/40 px-1.5 py-0.5 text-[11px] font-medium text-violet-300"
                       >
-                        Release day
+                        Preview
                       </span>
                     )}
                     {s.isReRelease && (

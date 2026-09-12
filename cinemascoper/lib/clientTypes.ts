@@ -43,6 +43,10 @@ export interface JoinedSession extends Session {
   cinemaName: string;
   isReleaseDay: boolean;
   isReRelease: boolean;
+  // A session scheduled *before* the movie's own official release date —
+  // a sneak/preview screening. See the doc comment on `isPreview` in
+  // lib/apiState.ts for exactly how this is computed.
+  isPreview: boolean;
   ticketPurchased: boolean;
 }
 

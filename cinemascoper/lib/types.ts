@@ -4,7 +4,25 @@
 
 export type ReleaseType = "Standard Theatrical" | "Limited Release" | "Film Festival";
 
-export type SessionFormat = "2D" | "3D" | "IMAX" | "Gold Class" | "Subtitled" | "70mm" | "Extreme Screen";
+// Widened from the original 7 per Connor's ask to "go bigger" — every
+// large/premium format actually in play across the cinemas CinemaScoper
+// integrates with (or reasonably could): Event's own VMAX brand no longer
+// folds into "IMAX" (it's visually and technically distinct — see
+// eventScraper's mapFormat), plus 4DX and Dolby Cinema, which several Hoyts
+// and Event venues run, even though no scraper here has a *confirmed* live
+// example of one yet (see the doc comments on hoytsScraper/eventScraper's
+// mapFormat for exactly what's confirmed vs best-effort).
+export type SessionFormat =
+  | "2D"
+  | "3D"
+  | "IMAX"
+  | "VMAX"
+  | "4DX"
+  | "Dolby Cinema"
+  | "Gold Class"
+  | "Subtitled"
+  | "70mm"
+  | "Extreme Screen";
 
 /**
  * Which real (or simulated) session-times source a cinema is scraped from.

@@ -252,6 +252,12 @@ function ByDateList({
 function MonthCalendar({ movies, onSelect }: { movies: Movie[]; onSelect: (movieId: string) => void }) {
   const today = new Date();
   const [cursor, setCursor] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
+  // "If there's 2+ more etc., can you make it so that this can be expanded
+  // to show all of the release dates of that day?" — a day cell only ever
+  // shows its first 3 releases inline (not enough room for more in a
+  // ~5.5rem cell); clicking "+N more" opens every release for that one day
+  // in a small popover instead of navigating away from the calendar.
+  const [expandedDateKey, setExpandedDateKey] = useState<string | null>(null);
 
   const byDay = useMemo(() => {
     const map = new Map<string, Movie[]>();
@@ -339,11 +345,80 @@ function MonthCalendar({ movies, onSelect }: { movies: Movie[]; onSelect: (movie
                     {m.title}
                   </button>
                 ))}
-                {releases.length > 3 && <span className="px-1 text-[10px] text-base-500">+{releases.length - 3} more</span>}
+                {releases.length > 3 && (
+                  <button
+                    onClick={() => setExpandedDateKey(cell.dateKey)}
+                    className="px-1 text-left text-[10px] font-medium text-accent hover:underline"
+                  >
+                    +{releases.length - 3} more
+                  </button>
+                )}
               </div>
             </div>
           );
         })}
+      </div>
+
+      {expandedDateKey && (
+        <DayReleasesPopover
+          dateKey={expandedDateKey}
+          releases={byDay.get(expandedDateKey) ?? []}
+          onSelect={(id) => {
+            setExpandedDateKey(null);
+            onSelect(id);
+          }}
+          onClose={() => setExpandedDateKey(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function DayReleasesPopover({
+  dateKey,
+  releases,
+  onSelect,
+  onClose,
+}: {
+  dateKey: string;
+  releases: Movie[];
+  onSelect: (movieId: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-30 flex items-end justify-center bg-black/60 p-0 sm:items-center sm:p-4" onClick={onClose}>
+      <div
+        className="flex max-h-[70vh] w-full max-w-sm flex-col overflow-hidden rounded-t-2xl border border-base-700 bg-base-900 sm:rounded-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-base-800 px-4 py-3">
+          <div>
+            <p className="text-sm font-semibold text-base-100">{formatDate(dateKey)}</p>
+            <p className="text-xs text-base-500">
+              {releases.length} release{releases.length === 1 ? "" : "s"}
+            </p>
+          </div>
+          <IconButton title="Close" onClick={onClose}>
+            <XIcon className="h-4 w-4" />
+          </IconButton>
+        </div>
+        <ul className="flex flex-col gap-1.5 overflow-y-auto p-3">
+          {releases.map((movie) => (
+            <li key={movie.id}>
+              <button
+                onClick={() => onSelect(movie.id)}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-base-800"
+              >
+                <span
+                  className={`h-8 w-8 shrink-0 rounded-md bg-gradient-to-br ${movie.posterColor} bg-cover bg-center`}
+                  style={movie.posterUrl ? { backgroundImage: `url(${movie.posterUrl})` } : undefined}
+                />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-base-100">{movie.title}</span>
+                <ReleaseTypeBadge type={movie.releaseType} />
+              </button>
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   );

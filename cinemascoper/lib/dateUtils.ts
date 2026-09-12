@@ -52,8 +52,17 @@ export function formatTimeOfDay(iso: string): string {
 // A session more than this many days after its movie's own release date
 // reads as a re-release / revival screening rather than "new" — e.g. the
 // Ritz's 70mm seasons, or an old catalogue title Golden Age puts back on.
-// Not scientifically tuned, just comfortably past any normal theatrical run.
-const RE_RELEASE_THRESHOLD_DAYS = 90;
+//
+// Deliberately generous (well over a year) rather than tuned to a normal
+// theatrical run's length: Connor reported the previous, much shorter
+// threshold (90 days, ~3 months) was wrongly flagging brand-new sessions of
+// a movie still in its ordinary cinematic run — a slow-rollout awards-season
+// film, or just a long-legs word-of-mouth hit, can easily still be selling
+// tickets 4-6 months after release without that being a "re-release" in any
+// meaningful sense. Connor's own framing was "screenings of movies released
+// years ago" — so this is set comfortably past a year, not tuned to the
+// shortest gap that would ever look wrong.
+const RE_RELEASE_THRESHOLD_DAYS = 450;
 
 /** Whether a session at `sessionStartsAtIso` reads as a re-release of `releaseDate` rather than
  * part of the film's original theatrical run — backs the Session Times "New release / Re-release"

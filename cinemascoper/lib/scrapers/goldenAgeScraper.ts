@@ -1,21 +1,31 @@
-import { Session } from "../types";
+import { Movie, Session } from "../types";
 import { makeId } from "../ids";
 import { CinemaScraper } from "./types";
-import { slugifyTitle } from "./titleMatch";
+import { titlesMatch } from "./titleMatch";
+import { resolveShadowMovie } from "./shadowMovies";
 import { inferYear, monthIndexFromAbbrev, sydneyWallClockToUtc } from "./sydneyTime";
 
 /**
  * Golden Age Cinema & Bar (ourgoldenage.com.au — a single venue, so
- * `Cinema.providerId` is unused). Two-step, both genuinely public with no
+ * `Cinema.providerId` is unused). Three steps, all genuinely public with no
  * auth/cookies:
  *
- *  1. Each film's own page, `https://www.ourgoldenage.com.au/film/<slug>`,
+ *  1. `https://www.ourgoldenage.com.au/films/now-showing` — confirmed live
+ *     to be plain server-rendered HTML (not client-rendered — a raw fetch
+ *     with no JS execution returns the full listing, unlike Dendy's site),
+ *     listing every film currently on, each as
+ *     `<a aria-label="<Title>" class="…__link" href="/film/<slug>">`. This
+ *     is what makes Golden Age a full-listing scraper now (previously it
+ *     only ever asked about `candidateMovies` via a guessed slug, so an
+ *     untracked title — an old catalogue re-release, a one-off event —
+ *     never surfaced here even if it was genuinely showing).
+ *  2. Each film's own page, `https://www.ourgoldenage.com.au/film/<slug>`,
  *     embeds `"ferveID":"<hash>"` somewhere in its page data — the id
  *     Golden Age's ticketing widget ("Ferve") uses for that title. The
  *     regex below tolerates it showing up either as plain JSON or
  *     backslash-escaped (it's nested inside a serialized string in the
  *     page's own script payload).
- *  2. `GET https://tix.ourgoldenage.com.au/api/v1/Items/DatesCached?itemHash=<hash>&app=false`
+ *  3. `GET https://tix.ourgoldenage.com.au/api/v1/Items/DatesCached?itemHash=<hash>&app=false`
  *     returns `{ SuccessMessages: [htmlFragment] }` — a legacy
  *     widget-renders-HTML-into-JSON API rather than clean structured
  *     data. The fragment has one row per session with the date/time as
@@ -33,6 +43,32 @@ import { inferYear, monthIndexFromAbbrev, sydneyWallClockToUtc } from "./sydneyT
 const BASE_URL = "https://www.ourgoldenage.com.au";
 const FERVE_ID_RE = /ferveID[\\"]*:[\\"]*([0-9a-f]{16,40})/i;
 const DATE_TIME_RE = /(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{1,2}):(\d{2})\s*(AM|PM)/i;
+const LISTING_LINK_RE = /<a aria-label="([^"]*)" class="[^"]*__link"[^>]*href="\/film\/([a-z0-9-]+)"/g;
+
+interface GoldenAgeListing {
+  title: string;
+  slug: string;
+}
+
+async function fetchListing(): Promise<GoldenAgeListing[]> {
+  try {
+    const res = await fetch(`${BASE_URL}/films/now-showing`);
+    if (!res.ok) return [];
+    const html = await res.text();
+    const seenSlugs = new Set<string>();
+    const out: GoldenAgeListing[] = [];
+    for (const m of html.matchAll(LISTING_LINK_RE)) {
+      const [, title, slug] = m;
+      if (seenSlugs.has(slug)) continue;
+      seenSlugs.add(slug);
+      out.push({ title, slug });
+    }
+    return out;
+  } catch (err) {
+    console.error("[goldenAgeScraper] failed to fetch /films/now-showing:", err);
+    return [];
+  }
+}
 
 async function findFerveId(slug: string): Promise<string | null> {
   try {
@@ -64,15 +100,26 @@ async function fetchDateTimeStrings(ferveId: string): Promise<string[]> {
 export const goldenAgeScraper: CinemaScraper = {
   name: "Golden Age Cinema & Bar (ourgoldenage.com.au)",
 
-  async discoverNewSessions({ cinema, candidateMovies, existingSessions, now }) {
-    // Like Ritz Randwick and Dendy, this asks about one candidate movie at
-    // a time (no site-wide "what's on" listing reverse-engineered here),
-    // so it never creates shadow movies itself.
+  async discoverNewSessions({ cinema, allKnownMovies, existingSessions, now }) {
+    const listing = await fetchListing();
     const discovered: Session[] = [];
+    const knownForMatch = [...allKnownMovies];
+    const shadowMovies: Movie[] = [];
 
-    for (const movie of candidateMovies) {
-      const slug = slugifyTitle(movie.title);
-      const ferveId = await findFerveId(slug);
+    for (const entry of listing) {
+      // Match against everything known, not just this tick's near-term
+      // candidates — see the doc comment on `discoverNewSessions` in
+      // lib/scrapers/types.ts.
+      let movie = knownForMatch.find((m) => titlesMatch(m.title, entry.title));
+      if (!movie) {
+        movie = resolveShadowMovie(entry.title, knownForMatch);
+        if (!knownForMatch.some((m) => m.id === movie!.id)) {
+          knownForMatch.push(movie);
+          shadowMovies.push(movie);
+        }
+      }
+
+      const ferveId = await findFerveId(entry.slug);
       if (!ferveId) continue;
 
       const rows = await fetchDateTimeStrings(ferveId);
@@ -92,7 +139,7 @@ export const goldenAgeScraper: CinemaScraper = {
         const startsAtIso = startsAt.toISOString();
 
         const alreadyKnown = [...existingSessions, ...discovered].some(
-          (s) => s.movieId === movie.id && s.cinemaId === cinema.id && s.startsAt === startsAtIso
+          (s) => s.movieId === movie!.id && s.cinemaId === cinema.id && s.startsAt === startsAtIso
         );
         if (alreadyKnown) continue;
 
@@ -103,11 +150,11 @@ export const goldenAgeScraper: CinemaScraper = {
           startsAt: startsAtIso,
           format: "2D",
           publishedAt: now.toISOString(),
-          ticketUrl: `${BASE_URL}/film/${slug}`,
+          ticketUrl: `${BASE_URL}/film/${entry.slug}`,
         });
       }
     }
 
-    return { sessions: discovered, shadowMovies: [] };
+    return { sessions: discovered, shadowMovies };
   },
 };
