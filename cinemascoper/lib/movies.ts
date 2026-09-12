@@ -7,14 +7,14 @@ import { SEED_MOVIES } from "./seedMovies";
  * demo catalogue when it isn't, so local dev with no key still works).
  *
  * What this fetches: TMDB's `discover/movie` filtered to `region: "AU"`
- * and theatrical release types (2 = limited, 3 = wide), sorted by AU
- * release date, spanning from `LOOKBACK_DAYS` ago (so a movie that *just*
- * opened is still visible) to `LOOKAHEAD_DAYS` out. For each result, one
- * follow-up call to `/movie/{id}?append_to_response=release_dates` gets
- * runtime, full genre names, and the AU-specific release_dates entry —
- * used to tell "Limited Release" apart from "Standard Theatrical" (TMDB
- * doesn't have a "Film Festival" release type, so real data never produces
- * that ReleaseType; it stays available for the demo catalogue only).
+ * and theatrical release types (2 = limited, 3 = wide), spanning from
+ * `LOOKBACK_DAYS` ago (so a movie that *just* opened is still visible) to
+ * `LOOKAHEAD_DAYS` out. For each result, one follow-up call to
+ * `/movie/{id}?append_to_response=release_dates` gets runtime, full genre
+ * names, and the AU-specific release_dates entry — used to tell "Limited
+ * Release" apart from "Standard Theatrical" (TMDB doesn't have a "Film
+ * Festival" release type, so real data never produces that ReleaseType;
+ * it stays available for the demo catalogue only).
  *
  * Filtering deliberately uses `release_date.gte/lte` (which, combined with
  * `region`, TMDB scopes to *that region's own* release dates) rather than
@@ -25,6 +25,18 @@ import { SEED_MOVIES } from "./seedMovies";
  * Australian releases. `region` narrows which release counts; it doesn't
  * narrow *which date field* gets filtered/sorted unless you also pick the
  * region-aware filter.
+ *
+ * Candidates are pulled by `popularity.desc`, not `release_date.asc` —
+ * tried second. TMDB tracks a *lot* of "Limited Release" (type 2) AU
+ * entries — every one-off revival screening, tiny single-cinema season,
+ * etc. — dense enough that an ascending-date sort combined with any fixed
+ * page/movie cap exhausted the cap on whatever was earliest in the window
+ * (in practice, everything within about 3 weeks out) and never reached
+ * further-out releases at all, no matter how far `LOOKAHEAD_DAYS` was
+ * pushed out. Sorting by popularity instead spreads the kept movies across
+ * the whole window (popular titles aren't clustered at the front) and
+ * favours ones actually worth showing on a release radar; results are
+ * still sorted back into date order afterwards for display.
  *
  * Capped at MAX_MOVIES and cached in memory for CACHE_TTL_MS: this is a
  * single-user, low-traffic app, and every extra movie is one extra TMDB
@@ -42,8 +54,8 @@ const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500";
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const MAX_MOVIES = 40; // bounds discover pages fetched and detail lookups made
-const MAX_PAGES = 3; // TMDB returns 20 results/page
+const MAX_MOVIES = 50; // bounds discover pages fetched and detail lookups made
+const MAX_PAGES = 4; // TMDB returns 20 results/page
 const LOOKBACK_DAYS = 14;
 const LOOKAHEAD_DAYS = 180; // ~6 months of upcoming releases
 
@@ -135,7 +147,11 @@ async function fetchFromTmdb(apiKey: string): Promise<Movie[]> {
       // which ignores `region` and pulls from TMDB's whole global catalogue.
       "release_date.gte": gte,
       "release_date.lte": lte,
-      sort_by: "release_date.asc",
+      // popularity, not release_date (see doc comment above) — an ascending
+      // date sort exhausts the movie cap on whatever's earliest and never
+      // reaches the rest of the window; final display order is still by
+      // date, just sorted back into that order after fetching (below).
+      sort_by: "popularity.desc",
       include_adult: "false",
       page: String(page),
     });
