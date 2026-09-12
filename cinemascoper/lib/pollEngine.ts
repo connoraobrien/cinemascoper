@@ -30,6 +30,12 @@ export interface PollSummary {
   newNotifications: AppNotification[];
 }
 
+export interface ScrapedCinemaResult {
+  cinemaId: string;
+  sessions: Session[];
+  shadowMovies: Movie[];
+}
+
 /**
  * Folds a batch of newly-discovered, rule-matching sessions for one movie
  * into notification digests: appends to whatever unread "new-session"
@@ -101,59 +107,99 @@ function detectReleaseDateChanges(db: DB, allMovies: Movie[], now: Date, newNoti
 }
 
 /**
- * The background check: what the cron in `vercel.json` triggers on a
- * schedule by calling out to each cinema's own real provider (see
- * `lib/scrapers/`). Scoped to `db.cinemas` — every cinema you've added is,
- * by definition, one you're tracking (see the doc comment on `DB.cinemas`
- * in `lib/types.ts`).
+ * The slow part of a poll tick: real network calls out to each tracked
+ * cinema's own provider (see `lib/scrapers/`). Deliberately takes no `DB`
+ * mutation lock — it only *reads* a snapshot of `db` (cinemas, existing
+ * sessions) for dedup context, and returns what it found rather than
+ * writing anything itself. This separation is what fixes a real bug: this
+ * step can now take a real amount of time (Ritz alone fetches 7 day pages,
+ * Event up to ~28 date pages, Dendy/Golden Age one lookup per movie in
+ * their whole lineup) — previously the entire scrape ran *inside* the
+ * store's load-mutate-save cycle (`withDB`), holding a snapshot of the
+ * database open the whole time; anything Connor did in the app while a
+ * poll was mid-flight (add to watchlist, mark tickets, add a cinema) would
+ * get silently overwritten the moment that stale snapshot was finally
+ * saved back. Keeping this step DB-write-free, and committing its results
+ * through a short, fresh `withDB` call afterward (see `commitPollResults`
+ * below and its call site in `app/api/poll/route.ts`), shrinks that
+ * "in-flight" window from "the whole scrape" down to one fast read-modify-
+ * write, which is what actually stops progress from disappearing.
  *
- * Async, and cinemas are checked one at a time rather than in parallel —
- * deliberately gentle on the handful of real sites this hits, and it
- * keeps one slow/flaky cinema from racing a serverless function's time
- * budget against every other cinema's requests.
+ * Cinemas are scraped in parallel (`Promise.all`) rather than one at a time
+ * — previously sequential specifically to be gentle on the real sites and
+ * stay inside a serverless function's time budget, but with several
+ * providers now each making a handful of real requests per cinema, doing
+ * them one cinema at a time made an ordinary poll tick take a genuinely
+ * long time. Parallel is safe here without any extra coordination: a
+ * shadow movie's id is a deterministic hash of its normalized title (see
+ * `lib/scrapers/shadowMovies.ts`), so two cinemas independently discovering
+ * the same untracked title in the same tick just produce two `Movie`
+ * objects with the *same* id rather than a duplicate — `commitPollResults`
+ * dedupes by id when it writes them in.
  */
-export async function runPoll(db: DB, allMovies: Movie[], now: Date = new Date()): Promise<PollSummary> {
+export async function scrapeAllCinemas(db: DB, allMovies: Movie[], now: Date): Promise<ScrapedCinemaResult[]> {
   const watchlistedIds = new Set(db.watchlist.map((w) => w.movieId));
   const candidates = candidateMovies(allMovies, now, watchlistedIds);
+
+  return Promise.all(
+    db.cinemas.map(async (cinema): Promise<ScrapedCinemaResult> => {
+      const scraper = getScraperForProvider(cinema.provider);
+      const existingForCinema = db.sessions.filter((s) => s.cinemaId === cinema.id);
+      try {
+        const result = await scraper.discoverNewSessions({
+          cinema,
+          candidateMovies: candidates,
+          allKnownMovies: allMovies,
+          existingSessions: existingForCinema,
+          now,
+        });
+        return { cinemaId: cinema.id, sessions: result.sessions, shadowMovies: result.shadowMovies };
+      } catch (err) {
+        console.error(`[pollEngine] scraper for ${cinema.name} (${cinema.provider}) threw:`, err);
+        return { cinemaId: cinema.id, sessions: [], shadowMovies: [] };
+      }
+    })
+  );
+}
+
+/**
+ * The fast part of a poll tick: takes whatever `scrapeAllCinemas` already
+ * found (no network calls here) and writes it into `db` — meant to run
+ * inside a single short `withDB` call, against a *freshly re-loaded* `db`
+ * (loaded right before this runs, well after scraping finished), not the
+ * snapshot `scrapeAllCinemas` read its dedup context from. That gap is why
+ * every session gets a second, cheap `alreadyKnown` check here against the
+ * live `db.sessions` — insurance against the (small, since scraping now
+ * runs in parallel rather than taking minutes) chance that something else
+ * wrote a session in between, so re-committing stale scrape results can't
+ * duplicate it.
+ */
+export function commitPollResults(
+  db: DB,
+  results: ScrapedCinemaResult[],
+  allMovies: Movie[],
+  now: Date
+): PollSummary {
   const newSessions: Session[] = [];
   const newNotifications: AppNotification[] = [];
-
-  // Grows as scrapers discover shadow movies (see
-  // lib/scrapers/shadowMovies.ts) within this same tick, so a title one
-  // cinema's listing surfaces can immediately be matched — rather than
-  // re-created — by the next cinema's listing later in this same loop.
-  const knownForPoll = [...allMovies];
-
-  // Newly-discovered, rule-matching session ids this tick, grouped by
-  // movie so each movie folds into at most one digest per tick (see
-  // `foldIntoDigest`) rather than one append per session.
   const matchedByMovie = new Map<string, { sessionIds: string[]; ruleType: AppNotification["ruleType"] }>();
 
-  for (const cinema of db.cinemas) {
-    const scraper = getScraperForProvider(cinema.provider);
-    const existingForCinema = db.sessions.filter((s) => s.cinemaId === cinema.id);
-
-    let discovered: Session[] = [];
-    try {
-      const result = await scraper.discoverNewSessions({
-        cinema,
-        candidateMovies: candidates,
-        allKnownMovies: knownForPoll,
-        existingSessions: existingForCinema,
-        now,
-      });
-      discovered = result.sessions;
-      for (const shadow of result.shadowMovies) {
-        if (knownForPoll.some((m) => m.id === shadow.id)) continue;
-        knownForPoll.push(shadow);
-        db.manualMovies.push(shadow);
-      }
-    } catch (err) {
-      console.error(`[pollEngine] scraper for ${cinema.name} (${cinema.provider}) threw:`, err);
-      continue;
+  const knownShadowIds = new Set(db.manualMovies.map((m) => m.id));
+  for (const r of results) {
+    for (const shadow of r.shadowMovies) {
+      if (knownShadowIds.has(shadow.id)) continue;
+      knownShadowIds.add(shadow.id);
+      db.manualMovies.push(shadow);
     }
+  }
 
-    for (const session of discovered) {
+  for (const r of results) {
+    for (const session of r.sessions) {
+      const alreadyKnown = db.sessions.some(
+        (s) => s.movieId === session.movieId && s.cinemaId === session.cinemaId && s.startsAt === session.startsAt
+      );
+      if (alreadyKnown) continue;
+
       db.sessions.push(session);
       newSessions.push(session);
 
@@ -177,10 +223,24 @@ export async function runPoll(db: DB, allMovies: Movie[], now: Date = new Date()
 
   return {
     ranAt: now.toISOString(),
-    cinemasChecked: db.cinemas.length,
+    cinemasChecked: results.length,
     newSessions,
     newNotifications,
   };
+}
+
+/**
+ * Convenience wrapper kept for anything that wants the old "one call does
+ * everything" shape (e.g. a test script) — scrapes and commits back to
+ * back against the *same* `db` object with no re-read in between. Real
+ * request handling (`app/api/poll/route.ts`) does NOT use this: it calls
+ * `scrapeAllCinemas` and `commitPollResults` separately, with a fresh
+ * `withDB`-scoped re-read of `db` in between, specifically to avoid the
+ * long-held-snapshot race described on `scrapeAllCinemas` above.
+ */
+export async function runPoll(db: DB, allMovies: Movie[], now: Date = new Date()): Promise<PollSummary> {
+  const results = await scrapeAllCinemas(db, allMovies, now);
+  return commitPollResults(db, results, allMovies, now);
 }
 
 // Re-exported for any caller that still wants a human-readable cinema name

@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { WatchlistMovie, JoinedSession, Cinema } from "@/lib/clientTypes";
 import { EmptyState, ReleaseTypeBadge, SectionHeading, Chip } from "./ui";
-import { formatDate, daysUntil } from "@/lib/dateUtils";
+import { formatDate, daysUntil, formatDayLabel } from "@/lib/dateUtils";
 import { EyeOffIcon, PlayIcon, PlusIcon, SearchIcon, XIcon } from "./Icons";
-import { SessionList } from "./SessionList";
+import { SessionRows, groupSessionsByDate } from "./SessionList";
 
 type StatusFilter = "all" | "released" | "coming-soon" | "tba";
 type SessionsFilter = "all" | "has-sessions" | "no-sessions";
@@ -359,13 +359,66 @@ function AllExpanded({
               </button>
             </div>
           </div>
-          <SessionList
+          <DayTabbedSessionList
+            key={movie.id}
             sessions={sessionsFor(movie.id)}
             emptyHint="No session times published yet at your cinemas."
             onTogglePurchased={onTogglePurchased}
           />
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * "Instead of listing all of the session times under the movies in a big
+ * list, could you have, under the movies, tabs for each of the days that
+ * there are sessions? and then when you click the day, the list of
+ * screenings for that movie will come up?" — one movie's sessions, tabbed
+ * by day instead of `SessionList`'s stacked day sections. Give this a
+ * `key` tied to whatever movie/filter it's showing (see the call site in
+ * `MovieDetail` below) so its day selection resets rather than carrying
+ * over a stale `dateKey` when Connor switches movies.
+ */
+function DayTabbedSessionList({
+  sessions,
+  emptyHint,
+  onTogglePurchased,
+}: {
+  sessions: JoinedSession[];
+  emptyHint: string;
+  onTogglePurchased: (sessionId: string) => void;
+}) {
+  const days = useMemo(() => groupSessionsByDate(sessions), [sessions]);
+  const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null);
+
+  if (days.length === 0) {
+    return <EmptyState title={emptyHint} />;
+  }
+
+  const activeDateKey = days.some((d) => d.dateKey === selectedDateKey) ? selectedDateKey : days[0].dateKey;
+  const activeDay = days.find((d) => d.dateKey === activeDateKey)!;
+
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {days.map((d) => (
+          <button
+            key={d.dateKey}
+            onClick={() => setSelectedDateKey(d.dateKey)}
+            className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+              d.dateKey === activeDateKey
+                ? "border-accent-dim/60 bg-accent-soft text-accent"
+                : "border-base-700 text-base-400 hover:border-base-600 hover:text-base-100"
+            }`}
+          >
+            {formatDayLabel(d.dateKey)}
+            <span className="ml-1 text-[10px] text-base-500">({d.sessions.length})</span>
+          </button>
+        ))}
+      </div>
+      <SessionRows sessions={activeDay.sessions} onTogglePurchased={onTogglePurchased} />
     </div>
   );
 }
@@ -517,7 +570,8 @@ function MovieDetail({
               title="To date"
             />
           </div>
-          <SessionList
+          <DayTabbedSessionList
+            key={movie.id}
             sessions={filteredSessions}
             emptyHint="No sessions match this filter."
             onTogglePurchased={onTogglePurchased}

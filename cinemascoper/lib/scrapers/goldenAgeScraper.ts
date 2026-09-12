@@ -1,7 +1,7 @@
 import { Movie, Session } from "../types";
 import { makeId } from "../ids";
 import { CinemaScraper } from "./types";
-import { titlesMatch } from "./titleMatch";
+import { titlesMatch, decodeHtmlText } from "./titleMatch";
 import { resolveShadowMovie } from "./shadowMovies";
 import { inferYear, monthIndexFromAbbrev, sydneyWallClockToUtc } from "./sydneyTime";
 
@@ -58,10 +58,10 @@ async function fetchListing(): Promise<GoldenAgeListing[]> {
     const seenSlugs = new Set<string>();
     const out: GoldenAgeListing[] = [];
     for (const m of html.matchAll(LISTING_LINK_RE)) {
-      const [, title, slug] = m;
+      const [, rawTitle, slug] = m;
       if (seenSlugs.has(slug)) continue;
       seenSlugs.add(slug);
-      out.push({ title, slug });
+      out.push({ title: decodeHtmlText(rawTitle), slug });
     }
     return out;
   } catch (err) {

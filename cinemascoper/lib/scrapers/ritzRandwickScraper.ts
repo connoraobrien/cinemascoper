@@ -1,7 +1,7 @@
 import { Movie, Session, SessionFormat } from "../types";
 import { makeId } from "../ids";
 import { CinemaScraper } from "./types";
-import { titlesMatch } from "./titleMatch";
+import { titlesMatch, decodeHtmlText } from "./titleMatch";
 import { resolveShadowMovie } from "./shadowMovies";
 import { sydneyTodayParts, sydneyWallClockToUtc, sydneyWeekdayName } from "./sydneyTime";
 
@@ -102,8 +102,9 @@ function extractSessions(html: string): RitzRow[] {
     const inner = m[2];
     const timeMatch = inner.match(/<span class="Time">([^<]+)<\/span>/);
     if (!timeMatch) continue;
-    const name = attrsHtml.match(/data-name="([^"]*)"/)?.[1] ?? "";
-    if (!name) continue;
+    const rawName = attrsHtml.match(/data-name="([^"]*)"/)?.[1] ?? "";
+    if (!rawName) continue;
+    const name = decodeHtmlText(rawName);
     const sessionId = attrsHtml.match(/data-id="(\d+)"/)?.[1] ?? null;
     const attributes = [...inner.matchAll(/<span class="Attribute[^"]*">([^<]*)<\/span>/g)].map((a) => a[1].trim());
     out.push({ name, sessionId, time: timeMatch[1].trim(), attributes });

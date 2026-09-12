@@ -15,7 +15,19 @@ import { TicketsTab } from "@/components/TicketsTab";
 // `vercel.json`'s cron hits the same endpoint on its own schedule
 // regardless of whether anyone has the app open — this client-side
 // interval is just an extra, more frequent check while you're looking at it.
-const AUTO_POLL_MS = 45_000;
+//
+// Widened from 45 seconds: that was set back when each tick was a fast,
+// simulated check. Now a tick makes real network calls out to every
+// tracked cinema's own site (Ritz alone fetches 7 day pages, Event up to
+// ~28), so a real poll can legitimately take several seconds to tens of
+// seconds — a 45-second interval meant a new tick could easily fire before
+// the previous one had finished. Combined with `pollingRef` below (which
+// now refuses to start a second tick while one's still running) rather
+// than just skip that overlap, it's better not to be requesting one this
+// often in the first place: 5 minutes is still frequent enough to feel
+// responsive for a single-user app, without hammering every tracked cinema
+// site on every tab left open.
+const AUTO_POLL_MS = 5 * 60_000;
 
 async function jsonFetch<T = AppState>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -36,6 +48,12 @@ export default function Home() {
   const [polling, setPolling] = useState(false);
   const [selectedWatchlistId, setSelectedWatchlistId] = useState<string | null>(null);
   const loadedOnce = useRef(false);
+  // In-flight guard for runCheck: `polling` state can't be read reliably
+  // from inside runCheck itself (it's a stale closure over whatever value
+  // was current when the memoized callback was created), so a plain ref is
+  // what actually stops the auto-poll interval from starting a second real
+  // scrape while the first one — now genuinely slow — is still running.
+  const pollingRef = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -48,6 +66,13 @@ export default function Home() {
   }, []);
 
   const runCheck = useCallback(async () => {
+    // Refuse to start a second real scrape while one's already running —
+    // both the manual "Run check now" button and the auto-poll interval
+    // call this same function, and a scrape can now take real time, so
+    // without this an impatient extra click (or the interval firing while
+    // a previous tick is still mid-flight) could overlap two ticks.
+    if (pollingRef.current) return;
+    pollingRef.current = true;
     setPolling(true);
     try {
       const { state: next } = await jsonFetch<{ state: AppState }>("/api/poll", { method: "POST" });
@@ -56,6 +81,7 @@ export default function Home() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Background check failed.");
     } finally {
+      pollingRef.current = false;
       setPolling(false);
     }
   }, []);

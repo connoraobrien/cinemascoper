@@ -56,7 +56,22 @@ const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500";
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const MAX_MOVIES = 80; // bounds discover pages fetched and detail lookups made
 const MAX_PAGES = 6; // TMDB returns 20 results/page
-const LOOKBACK_DAYS = 14;
+// Matches RE_RELEASE_THRESHOLD_DAYS in lib/dateUtils.ts, deliberately: this window is what decides
+// whether a movie has a *known* AU release date at all, which matters well beyond just how far back
+// the Release Radar scrolls. A full-listing cinema scraper (Ritz/Dendy/Golden Age) reports every film
+// in its current lineup, not just watchlisted ones — including a normal, still-running theatrical
+// release from a few months back. If that title isn't in this discover window, it can't be matched to
+// its real TMDB record and gets treated as an unrecognised "shadow" movie with no release date at all
+// (see lib/scrapers/shadowMovies.ts) — and `isReRelease()` treats *any* movie with no known release
+// date as a re-release, regardless of the date-math threshold. A too-small LOOKBACK_DAYS (14, before
+// this fix) was the actual cause of recently-released real films like "Tony" and "The Odyssey" showing
+// up tagged "Re-release": not the threshold itself, but real AU release dates falling out of the
+// catalogue entirely. Widening this to match the re-release threshold means "does this count as a
+// re-release" and "do we know this movie's real release date" cover the same span. The existing
+// popularity-based sort (see the module doc comment above) keeps this from being crowded out by
+// obscure old titles; the separate "New releases only" filter in ReleasesTab handles decluttering the
+// Release Radar's *view*, so this doesn't also need to stay narrow for that reason.
+const LOOKBACK_DAYS = 450;
 const LOOKAHEAD_DAYS = 270; // ~9 months of upcoming releases — wider than a typical "coming soon" page on
 // purpose, since a single-cinema/limited release can be locked in that far out and Connor would
 // rather scroll past more titles than miss one; the "Mainstream releases" filter (popularity-based,

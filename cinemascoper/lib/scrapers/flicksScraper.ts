@@ -1,7 +1,7 @@
 import { Movie, Session } from "../types";
 import { makeId } from "../ids";
 import { CinemaScraper } from "./types";
-import { titlesMatch } from "./titleMatch";
+import { titlesMatch, decodeHtmlText } from "./titleMatch";
 import { sydneyTodayParts, sydneyWallClockToUtc } from "./sydneyTime";
 import { resolveShadowMovie } from "./shadowMovies";
 
@@ -50,7 +50,8 @@ function extractMovieBlocks(html: string): { title: string; sessions: { time: st
   const chunks = html.split("<article").slice(1); // first split part is before any article
   const sessionRe = /<a[^>]*class="times-calendar-times__button[^"]*"[^>]*href="([^"]+)"[^>]*>[\s\S]*?times-calendar-times__el__time">([^<]+)</g;
   return chunks.map((chunk) => {
-    const title = chunk.match(/cinema-times__movie-title">([^<]+)</)?.[1]?.trim() ?? "";
+    const rawTitle = chunk.match(/cinema-times__movie-title">([^<]+)</)?.[1]?.trim() ?? "";
+    const title = decodeHtmlText(rawTitle);
     const sessions = [...chunk.matchAll(sessionRe)].map((m) => ({ ticketUrl: m[1], time: m[2].trim() }));
     return { title, sessions };
   });

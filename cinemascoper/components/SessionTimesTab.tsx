@@ -2,11 +2,12 @@
 
 import { useMemo, useState } from "react";
 import { Cinema, JoinedSession, SessionFormat } from "@/lib/clientTypes";
-import { SectionHeading, Chip } from "./ui";
-import { SearchIcon } from "./Icons";
-import { SessionList } from "./SessionList";
+import { SectionHeading, Chip, EmptyState } from "./ui";
+import { SearchIcon, CheckIcon, EyeOffIcon, TicketIcon } from "./Icons";
+import { groupSessionsByDate } from "./SessionList";
 import { MultiSelectDropdown } from "./MultiSelectDropdown";
 import { sydneyTimeOfDayMinutes } from "@/lib/scrapers/sydneyTime";
+import { formatDayLabel, formatTimeOfDay, monthYearLabel } from "@/lib/dateUtils";
 
 type ReleaseKindFilter = "all" | "new" | "re-release";
 
@@ -15,6 +16,169 @@ function timeStringToMinutes(t: string): number | null {
   const [h, m] = t.split(":").map(Number);
   if (Number.isNaN(h) || Number.isNaN(m)) return null;
   return h * 60 + m;
+}
+
+/** One bookable time slot — the innermost thing in the day → movie → cinema
+ * hierarchy below. Shows the time, format badge, preview/re-release badges,
+ * a "got tickets" toggle, and a tickets button, all in one compact pill —
+ * everything a flat `SessionList` row showed, just nested one level deeper
+ * now that cinema/movie are already established by the group it's in. */
+function SessionTimeChip({
+  session,
+  onTogglePurchased,
+}: {
+  session: JoinedSession;
+  onTogglePurchased: (sessionId: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-base-800 bg-base-900 px-2.5 py-1.5 text-sm">
+      <span className="font-medium text-base-100">{formatTimeOfDay(session.startsAt)}</span>
+      <span className="rounded-full border border-base-700 bg-base-850 px-1.5 py-0.5 text-[11px] text-base-400">
+        {session.format}
+      </span>
+      {session.isPreview && (
+        <span
+          title="Screening ahead of this film's official release day — a sneak preview"
+          className="rounded-full border border-violet-700/40 bg-violet-950/40 px-1.5 py-0.5 text-[11px] font-medium text-violet-300"
+        >
+          Preview
+        </span>
+      )}
+      {session.isReRelease && (
+        <span className="rounded-full border border-amber-700/40 bg-amber-950/40 px-1.5 py-0.5 text-[11px] text-amber-300">
+          Re-release
+        </span>
+      )}
+      <button
+        onClick={() => onTogglePurchased(session.id)}
+        title={session.ticketPurchased ? "You've got tickets — tap to undo" : "Mark that you've got tickets"}
+        className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium transition-colors ${
+          session.ticketPurchased
+            ? "border-emerald-700/50 bg-emerald-950/40 text-emerald-300"
+            : "border-base-700 text-base-400 hover:border-base-600 hover:text-base-100"
+        }`}
+      >
+        {session.ticketPurchased ? <CheckIcon className="h-3.5 w-3.5" /> : <TicketIcon className="h-3.5 w-3.5" />}
+        {session.ticketPurchased ? "Got tickets" : "Got tickets?"}
+      </button>
+      {session.ticketUrl && (
+        <a
+          href={session.ticketUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 rounded-lg border border-accent-dim/50 bg-accent-soft px-2 py-1 text-xs font-medium text-accent hover:border-accent-dim"
+        >
+          <TicketIcon className="h-3.5 w-3.5" /> Tickets
+        </a>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The Sessions tab's main view: day, then every movie showing that day,
+ * then every cinema it's showing at, then that cinema's session times —
+ * per Connor's ask, replacing what used to be one big flat list of times.
+ * Built directly on `groupSessionsByDate` (the same day-grouping the old
+ * flat `SessionList` used) so the two nested `Map`s below just add the
+ * movie and cinema levels on top of it.
+ */
+function DayMovieCinemaSessionView({
+  sessions,
+  emptyHint,
+  onTogglePurchased,
+  onHideMovie,
+}: {
+  sessions: JoinedSession[];
+  emptyHint: string;
+  onTogglePurchased: (sessionId: string) => void;
+  onHideMovie: (movieId: string) => void;
+}) {
+  const days = groupSessionsByDate(sessions);
+
+  if (days.length === 0) {
+    return <EmptyState title={emptyHint} />;
+  }
+
+  let lastMonthYear = "";
+
+  return (
+    <div className="flex flex-col gap-6">
+      {days.map((day) => {
+        const monthYear = monthYearLabel(day.dateKey);
+        const showMonthYear = monthYear !== lastMonthYear;
+        lastMonthYear = monthYear;
+
+        // Movies showing that day, in first-seen order (sessions within a
+        // day already come out time-ascending from groupSessionsByDate, so
+        // this reads as "whichever film has the earliest session today
+        // comes first") — then, within each movie, the cinemas it's on at
+        // that day, same first-seen-order logic one level down.
+        const movieOrder: string[] = [];
+        const byMovie = new Map<string, JoinedSession[]>();
+        for (const s of day.sessions) {
+          if (!byMovie.has(s.movieId)) {
+            movieOrder.push(s.movieId);
+            byMovie.set(s.movieId, []);
+          }
+          byMovie.get(s.movieId)!.push(s);
+        }
+
+        return (
+          <div key={day.dateKey}>
+            {showMonthYear && (
+              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-base-600">{monthYear}</p>
+            )}
+            <p className="mb-2 text-xs font-medium text-base-400">{formatDayLabel(day.dateKey)}</p>
+            <div className="flex flex-col gap-3">
+              {movieOrder.map((movieId) => {
+                const movieSessions = byMovie.get(movieId)!;
+                const cinemaOrder: string[] = [];
+                const byCinema = new Map<string, JoinedSession[]>();
+                for (const s of movieSessions) {
+                  if (!byCinema.has(s.cinemaId)) {
+                    cinemaOrder.push(s.cinemaId);
+                    byCinema.set(s.cinemaId, []);
+                  }
+                  byCinema.get(s.cinemaId)!.push(s);
+                }
+
+                return (
+                  <div key={movieId} className="rounded-xl border border-base-800 bg-base-850 p-3">
+                    <div className="mb-2 flex items-center gap-1.5">
+                      <span className="font-medium text-base-100">{movieSessions[0].movieTitle}</span>
+                      <button
+                        onClick={() => onHideMovie(movieId)}
+                        title="Hide this movie — you've seen it, or you're not interested"
+                        className="text-base-600 hover:text-base-300"
+                      >
+                        <EyeOffIcon className="h-3 w-3" />
+                      </button>
+                    </div>
+                    <div className="flex flex-col gap-2.5">
+                      {cinemaOrder.map((cinemaId) => {
+                        const cinemaSessions = byCinema.get(cinemaId)!;
+                        return (
+                          <div key={cinemaId}>
+                            <p className="mb-1 text-xs text-base-400">{cinemaSessions[0].cinemaName}</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {cinemaSessions.map((s) => (
+                                <SessionTimeChip key={s.id} session={s} onTogglePurchased={onTogglePurchased} />
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 /**
@@ -231,9 +395,8 @@ export function SessionTimesTab({
         )}
       </div>
 
-      <SessionList
+      <DayMovieCinemaSessionView
         sessions={filtered}
-        showMovieTitle
         emptyHint="Nothing scheduled yet that matches this filter."
         onTogglePurchased={onTogglePurchased}
         onHideMovie={onHideMovie}

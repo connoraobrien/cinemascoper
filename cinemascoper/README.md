@@ -20,15 +20,17 @@ of the box.
   per movie (which cinemas, which days — not one alert per screening) and
   release-date changes arrive as their own distinct alert kind; filter by
   kind, delete individual alerts or clear them all.
-- **Sessions** — every upcoming session at your cinemas, not just what's on
-  your watchlist (including special/revival screenings a cinema shows that
-  never matched a tracked movie — see "Shadow movies" below), filterable by
-  film, director, cinema (a real multi-select dropdown, not a row of
-  chips), format (same), a date range, new-release vs. re-release, and time
-  of day, with a one-tap "only my watchlist" toggle. A day with a release
-  happening is flagged right on its date heading, and an individual
-  screening ahead of a movie's official release day is flagged as a
-  "Preview".
+- **Sessions** — organised as day → movie → cinema → times, rather than one
+  flat list: pick a date, see what's showing that day, which of your
+  cinemas it's at, and every session time there (each with its format,
+  "Got tickets?" toggle, and a tickets button) underneath. Covers every
+  upcoming session at your cinemas, not just what's on your watchlist
+  (including special/revival screenings a cinema shows that never matched a
+  tracked movie — see "Shadow movies" below), filterable by film, director,
+  cinema (a real multi-select dropdown, not a row of chips), format (same),
+  a date range, new-release vs. re-release, and time of day, with a one-tap
+  "only my watchlist" toggle. An individual screening ahead of a movie's
+  official release day is flagged as a "Preview".
 - **Releases** (Release Radar) — browse upcoming releases (tiles, a
   date-grouped list, or a real month calendar — a busy day's "+N more" is
   clickable, opening every release for that day rather than cutting off at
@@ -38,11 +40,12 @@ of the box.
   session times without committing to your watchlist, and search all of
   TMDB (by title or director, including already-released films) to add
   anything the discover window missed.
-- **Watchlist** — every tracked movie's sessions, organised by day and
-  noting cinema + format, with ticket links and trailers; filter by
-  cinema/date (with quick presets — today, this week, this weekend, next 30
-  days) or by released/coming soon/TBA, and see at a glance (and filter by)
-  which tracked movies actually have session times yet.
+- **Watchlist** — every tracked movie's sessions, with ticket links and
+  trailers, browsable day by day via tabs under each movie (click a day to
+  see just that day's screenings) rather than one long stacked list; filter
+  by cinema/date (with quick presets — today, this week, this weekend, next
+  30 days) or by released/coming soon/TBA, and see at a glance (and filter
+  by) which tracked movies actually have session times yet.
 - **My Tickets** — a simple itinerary of sessions you've marked "Got
   tickets?" from anywhere in the app, distinct from just tracking a movie.
 - Hide a movie you've already seen (or aren't interested in) from Release
@@ -53,7 +56,8 @@ of the box.
   watchlisted movie there), manage hidden movies, and a storage-backend
   banner that tells you straight away whether your data will actually
   persist (see "Deploying" below).
-- A **"Run check now"** button (and a 45s client-side interval) triggers a
+- A **"Run check now"** button (and a 5-minute client-side interval, guarded
+  so an overlapping check can't fire while one's still running) triggers a
   real background check on demand; `vercel.json` wires the same endpoint to
   a real cron schedule if you deploy it.
 
@@ -133,11 +137,22 @@ or to touch git at all:
    so the local `data/db.json` file this app uses for storage doesn't
    survive between requests there — you'd see cinemas/rules/alerts reset
    themselves. Fix: in the Vercel dashboard, open the project → **Storage**
-   tab → **Create Database** → choose the KV (Redis) option → connect it to
-   this project. Vercel wires up the right environment variables
-   automatically; `lib/store.ts` already knows to use them the moment
-   they're present. Redeploy once (`npx vercel --prod` again) after adding
-   it.
+   tab → **Marketplace Database Storage** → search for and install
+   **"Upstash for Redis"**, then connect/create an account and link it to
+   this project. (Vercel's own native "KV" product was retired in December
+   2024 — **Upstash for Redis** is the direct successor and the one to
+   pick; a different-looking product called "Redis for Vercel"/Redis Cloud
+   also shows up in the Marketplace and looks similar at a glance, but it
+   hands you a plain connection string for the `redis` npm client instead
+   of the REST API URL/token pair this app's `lib/kvStore.ts` actually
+   expects — if you pick that one by mistake, the Storage banner in
+   Settings will keep saying "local file" no matter what you set.) Once
+   Upstash for Redis is connected, Vercel injects `KV_REST_API_URL` /
+   `KV_REST_API_TOKEN` into the project automatically — `lib/store.ts`
+   already knows to use them the moment they're present. Redeploy once
+   (`npx vercel --prod` again) after adding it, and check the Storage
+   banner in Settings actually flips from "local file" to confirm it
+   worked.
 4. **Add real movie data.** In the dashboard's **Settings → Environment
    Variables**, add `TMDB_API_KEY` with a key from
    [themoviedb.org](https://www.themoviedb.org/settings/api) (free to
@@ -238,7 +253,14 @@ A few of these lean on best-effort heuristics rather than something the
 site states outright — chiefly matching a tracked movie to whatever title
 string the venue itself uses (see `lib/scrapers/titleMatch.ts`) — each is
 explained where it's implemented, and a miss just means "didn't find a
-session" rather than a crash. The Ritz Randwick scraper in particular used
+session" rather than a crash. Titles pulled straight out of raw HTML by
+regex (Ritz, Golden Age, flicks — Hoyts/Event/Dendy come from clean JSON
+APIs and don't need this) are run through `decodeHtmlText` in the same
+file, which decodes any HTML entity the site's markup used for an
+apostrophe/quote/dash (e.g. a raw `&#8217;` showing up as literal text
+rather than the `'` it's meant to be) and folds "smart" typographic
+punctuation down to plain ASCII, so a title like "Don't Look Back in
+Anger" displays cleanly rather than with stray entity text in it. The Ritz Randwick scraper in particular used
 to infer which calendar day a session fell on from where times "wrapped
 around" in an undated list — a heuristic that turned out to genuinely
 double sessions up and misattribute them to the wrong day whenever the real
@@ -274,19 +296,30 @@ No key set is a supported mode too — it just falls back to the demo
 catalogue, so local dev works with nothing configured.
 
 What it fetches: TMDB's `discover/movie`, filtered to `region: "AU"` and
-theatrical release types, spanning from two weeks ago (so a just-opened
-film still shows) to about six months out — using TMDB's region-scoped
-`release_date.gte/lte` filters rather than its global `primary_release_date`
-ones, so this is actually Australia's own release slate rather than
-whatever's earliest in TMDB's entire catalogue — then one follow-up call
-per movie for runtime, genre names, and its AU-specific release date. Results
-are cached in memory for a few hours; a transient TMDB failure (or an
-invalid key) falls back to the demo catalogue rather than showing an empty
-Release Radar. Nothing downstream needed to change — every consumer only
-depends on the `Movie` shape in `lib/types.ts`, and every scraper matches
-sessions to a movie by title string (see `lib/scrapers/titleMatch.ts`), not
-by any TMDB-specific id — so a different provider is a `lib/movies.ts` swap
-away too.
+theatrical release types, spanning from 450 days ago to about nine months
+out — using TMDB's region-scoped `release_date.gte/lte` filters rather than
+its global `primary_release_date` ones, so this is actually Australia's own
+release slate rather than whatever's earliest in TMDB's entire catalogue —
+then one follow-up call per movie for runtime, genre names, and its
+AU-specific release date. Results are cached in memory for a few hours; a
+transient TMDB failure (or an invalid key) falls back to the demo catalogue
+rather than showing an empty Release Radar. Nothing downstream needed to
+change — every consumer only depends on the `Movie` shape in
+`lib/types.ts`, and every scraper matches sessions to a movie by title
+string (see `lib/scrapers/titleMatch.ts`), not by any TMDB-specific id — so
+a different provider is a `lib/movies.ts` swap away too.
+
+> The 450-day lookback matches `RE_RELEASE_THRESHOLD_DAYS` in
+> `lib/dateUtils.ts` on purpose, not by coincidence — see the doc comment
+> on `LOOKBACK_DAYS` in `lib/movies.ts`. A too-narrow lookback (14 days,
+> before this fix) meant a real, recently-released movie that a full-listing
+> cinema scraper (Ritz/Dendy/Golden Age) found in its lineup could fall
+> *entirely* out of the known-movies catalogue and get treated as an
+> unrecognised "shadow" title with no release date at all — which reads as
+> a re-release regardless of the threshold, since there's nothing to
+> compare against. Widening this is what actually fixes that (the
+> re-release *threshold* itself was already correct), not a change to the
+> threshold value.
 
 > This wiring hasn't been exercised against a real TMDB response — this
 > sandbox has no outbound access to api.themoviedb.org either — so it's
@@ -307,11 +340,38 @@ fixed single venue). Nothing else needs to change.
 deployment (see "Deploying so it runs all the time" above — free/Hobby
 accounts cap cron jobs at once a day; a paid plan lifts that if you want
 it checking more often). A poll now makes real network calls per cinema
-(more of them the more cinemas/watchlist movies you have), but comfortably
-fits inside Vercel's current Hobby function duration (300s by default, as
-of writing) — cinemas are checked one at a time rather than in parallel,
-gently, so this is unlikely to matter in practice. Any other host just
-needs something to hit that same URL on a schedule.
+(more of them the more cinemas/watchlist movies you have) — cinemas are now
+checked **in parallel** (`Promise.all` in `lib/pollEngine.ts`'s
+`scrapeAllCinemas`, rather than one at a time as before) to keep an
+ordinary tick fast, which still comfortably fits inside Vercel's current
+Hobby function duration (300s by default, as of writing). See "Keeping
+polls from clobbering your in-app changes" below for how a tick's store
+writes are structured to stay safe under this. Any other host just needs
+something to hit that same URL on a schedule.
+
+#### Keeping polls from clobbering your in-app changes
+
+A poll tick used to run entirely inside one long database
+read-modify-write (`withDB` in `lib/store.ts`): load the store once, spend
+however long the whole scrape took, then save it back at the end. That's
+fine when a "scrape" is instant, but once every cinema started making real
+network calls, a tick could legitimately take several seconds to tens of
+seconds — and anything done in the app during that window (adding to the
+watchlist, marking tickets, adding a cinema) would get silently overwritten
+the moment the poll's now-stale snapshot was finally saved back. That's the
+mechanism behind "my progress just disappears" if you've seen it.
+
+Fixed by splitting a tick into two pieces (`app/api/poll/route.ts` +
+`lib/pollEngine.ts`): `scrapeAllCinemas` only *reads* a snapshot of the
+store and makes the real network calls — no database write held open for
+any of it — and then a short, separate `commitPollResults` call re-reads
+the *current* store and writes the results in, fast. That shrinks the
+"something could get overwritten" window from the whole scrape down to one
+quick read-modify-write, which is what actually stops changes from being
+lost. The client-side auto-poll interval also now refuses to start a
+second tick while one's still in flight (see `pollingRef` in
+`app/page.tsx`), on top of being widened from 45 seconds to 5 minutes —
+both aimed at the same problem from the browser side.
 
 This build is in-app notifications only (a badge + feed). To add browser
 push, register a service worker and call the Web Push API from inside
