@@ -4,7 +4,7 @@
 
 export type ReleaseType = "Standard Theatrical" | "Limited Release" | "Film Festival";
 
-export type SessionFormat = "2D" | "3D" | "IMAX" | "Gold Class" | "Subtitled";
+export type SessionFormat = "2D" | "3D" | "IMAX" | "Gold Class" | "Subtitled" | "70mm" | "Extreme Screen";
 
 /**
  * Which real (or simulated) session-times source a cinema is scraped from.
@@ -23,12 +23,15 @@ export interface Movie {
   id: string;
   title: string;
   releaseType: ReleaseType;
-  releaseDate: string; // ISO date, e.g. "2026-10-15"
+  releaseDate: string; // ISO date, e.g. "2026-10-15" — empty string means "yet to be announced"
   runtimeMinutes: number;
   genres: string[];
   synopsis: string;
   posterColor: string; // placeholder art: a CSS gradient seed, used when posterUrl is absent (or fails to load)
   posterUrl?: string; // a real poster image (from TMDB) when one is available
+  director?: string;
+  trailerUrl?: string; // a YouTube watch link (from TMDB's videos), when one is available
+  popularity?: number; // TMDB's own popularity score — backs the "Mainstream releases" filter
 }
 
 export interface Cinema {
@@ -83,16 +86,32 @@ export interface WatchlistEntry {
   addedAt: string;
 }
 
+export type NotificationKind = "new-session" | "release-date-change";
+
+/**
+ * `kind: "new-session"` notifications are *digests*, not one-per-screening:
+ * `sessionIds` accumulates every newly-discovered session for this movie
+ * that matched a rule, across as many poll ticks as the notification stays
+ * unread (see `lib/pollEngine.ts`) — reading it "closes" the digest, and the
+ * next new session starts a fresh one. `movieTitle`/cinema/date breakdown
+ * is computed fresh at read time in `lib/apiState.ts` from `sessionIds`
+ * rather than stored, so it can't go stale relative to `db.sessions`.
+ *
+ * `kind: "release-date-change"` is a single, distinct event — a tracked
+ * movie's own release date moved — and isn't digested with anything else.
+ */
 export interface AppNotification {
   id: string;
   createdAt: string;
   read: boolean;
-  kind: "new-session";
+  kind: NotificationKind;
   movieId: string;
-  cinemaId: string;
-  sessionId: string;
-  ruleType: AlertRuleType;
-  message: string;
+  // "new-session" only:
+  sessionIds: string[];
+  ruleType?: AlertRuleType;
+  // "release-date-change" only:
+  previousReleaseDate?: string;
+  newReleaseDate?: string;
 }
 
 export interface DB {
@@ -106,4 +125,18 @@ export interface DB {
   sessions: Session[];
   notifications: AppNotification[];
   lastPollAt: string | null;
+  // Movies added via the "search all of TMDB" flow (lib/allMovies.ts) —
+  // merged with the normal discover-window catalogue everywhere a full
+  // movie list is needed, so an already-released film or an obscure title
+  // outside the usual release window can still be tracked and polled.
+  manualMovies: Movie[];
+  // Ids Connor has hidden from the Release Radar (and muted notifications
+  // for) — see the "hide" action on a movie tile.
+  hiddenMovieIds: string[];
+  // The last release date CinemaScoper saw for each *watchlisted* movie,
+  // so a poll tick can detect when TMDB moves a tracked movie's date and
+  // fire a "release-date-change" notification (see lib/pollEngine.ts).
+  // Only tracked for watchlisted movies — everything else's date churns
+  // constantly on TMDB and would be pure noise.
+  trackedReleaseDates: Record<string, string>;
 }

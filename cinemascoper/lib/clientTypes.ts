@@ -3,9 +3,9 @@
 // which pulls in `fs`/`path` via lib/store) so client components never
 // accidentally bundle server-only code.
 
-import { Movie, Cinema, AlertRule, Session, AppNotification, ReleaseType, CinemaProvider } from "./types";
+import { Movie, Cinema, AlertRule, Session, AppNotification, NotificationKind, ReleaseType, CinemaProvider } from "./types";
 
-export type { Movie, Cinema, AlertRule, Session, AppNotification, ReleaseType, CinemaProvider };
+export type { Movie, Cinema, AlertRule, Session, AppNotification, NotificationKind, ReleaseType, CinemaProvider };
 
 export interface WatchlistMovie extends Movie {
   addedAt: string;
@@ -21,9 +21,16 @@ export interface JoinedSession extends Session {
   cinemaName: string;
 }
 
+export interface NotificationCinemaGroup {
+  cinemaId: string;
+  cinemaName: string;
+  dates: string[]; // "YYYY-MM-DD", ascending
+}
+
 export interface JoinedNotification extends AppNotification {
   movieTitle: string;
-  cinemaName: string;
+  cinemaGroups: NotificationCinemaGroup[]; // "new-session" kind only
+  message: string;
 }
 
 export interface AppState {
@@ -35,6 +42,8 @@ export interface AppState {
   notifications: JoinedNotification[];
   unreadCount: number;
   lastPollAt: string | null;
+  hiddenMovies: Movie[];
+  storage: "kv" | "file";
 }
 
 export interface PollSummary {

@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withDB } from "@/lib/store";
+import { withDB, readDB } from "@/lib/store";
 import { buildState } from "@/lib/apiState";
-import { getMovies } from "@/lib/movies";
+import { getAllKnownMovies } from "@/lib/allMovies";
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const movieId: string | undefined = body?.movieId;
 
-  if (!movieId || !(await getMovies()).some((m) => m.id === movieId)) {
+  if (!movieId || !(await getAllKnownMovies(await readDB())).some((m) => m.id === movieId)) {
     return NextResponse.json({ error: "Unknown movieId" }, { status: 400 });
   }
 

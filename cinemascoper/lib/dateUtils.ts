@@ -30,6 +30,25 @@ export function formatDateTime(iso: string): string {
   });
 }
 
+/** "Fri 18 Sep" — a compact day label for grouped lists (no year; pair with `monthYearLabel` when a
+ * year/month boundary needs calling out). Accepts either a full ISO datetime or a bare "YYYY-MM-DD". */
+export function formatDayLabel(dateKey: string): string {
+  const d = new Date(dateKey.length <= 10 ? `${dateKey}T00:00:00` : dateKey);
+  return d.toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" });
+}
+
+/** "September 2026" — used as a signpost row whenever a grouped-by-date list crosses into a new
+ * month or year, so a long list still reads clearly without repeating the year on every row. */
+export function monthYearLabel(dateKey: string): string {
+  const d = new Date(dateKey.length <= 10 ? `${dateKey}T00:00:00` : dateKey);
+  return d.toLocaleDateString("en-AU", { month: "long", year: "numeric" });
+}
+
+/** "7:45 pm" — just the time-of-day, for rows that already show their date via a group header. */
+export function formatTimeOfDay(iso: string): string {
+  return new Date(iso).toLocaleString("en-AU", { hour: "numeric", minute: "2-digit" });
+}
+
 export function formatRelative(iso: string, now: Date = new Date()): string {
   const diffMs = new Date(iso).getTime() - now.getTime();
   const diffMin = Math.round(diffMs / 60000);

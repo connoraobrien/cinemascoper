@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withDB } from "@/lib/store";
+import { withDB, readDB } from "@/lib/store";
 import { buildState } from "@/lib/apiState";
-import { getMovies } from "@/lib/movies";
+import { getAllKnownMovies } from "@/lib/allMovies";
 import { makeId } from "@/lib/ids";
 
 export async function POST(req: NextRequest) {
@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
   if (type !== "blanket" && type !== "targeted") {
     return NextResponse.json({ error: "type must be 'blanket' or 'targeted'" }, { status: 400 });
   }
-  if (type === "targeted" && (!movieId || !(await getMovies()).some((m) => m.id === movieId))) {
+  if (type === "targeted" && (!movieId || !(await getAllKnownMovies(await readDB())).some((m) => m.id === movieId))) {
     return NextResponse.json({ error: "targeted rules require a known movieId" }, { status: 400 });
   }
 

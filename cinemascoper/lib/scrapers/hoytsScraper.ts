@@ -35,7 +35,7 @@ const API_BASE = "https://apim-aea.hoyts.com.au/cinemaapi-au-live/api";
 function mapFormat(typeId: string | undefined): SessionFormat {
   switch (typeId) {
     case "XTREME":
-      return "IMAX";
+      return "Extreme Screen"; // Hoyts' own large-format brand (Xtremescreen) — distinct from IMAX
     case "LUX":
       return "Gold Class";
     default:

@@ -16,21 +16,28 @@ of the box.
 
 ## Features
 
-- **Australian Release Radar** — browse upcoming releases, filter by
-  Standard Theatrical / Limited Release / Film Festival, one-click "Track".
-- **Cinema & Movie Tracking Matrix** — add *any* cinema (search by name for
-  Hoyts/Event/Dendy, pick the two single-venue integrations, or search
-  flicks.com.au's national listing for anything else), set **blanket**
-  rules (alert on *any* new session at a cinema) or **targeted** rules
-  (alert only for one watchlisted movie at that cinema), and see every
-  tracked movie next to its matched upcoming sessions.
-- **Session Times Feed** — the alerts your rules have fired, plus every
-  upcoming session at your cinemas.
-- **Watchlist** — click a tracked movie to see its session times at your
-  cinemas, or its release countdown if nothing's on sale yet.
-- A **"Run check now"** button (and a 45s client-side interval) simulates
-  the background monitoring job; `vercel.json` wires the same endpoint to a
-  real cron schedule if you deploy it.
+- **Alerts** — new session times for a tracked movie arrive as one digest
+  per movie (which cinemas, which days — not one alert per screening) and
+  release-date changes arrive as their own distinct alert kind; filter by
+  kind, delete individual alerts or clear them all.
+- **Session Times** — every upcoming session at your cinemas, filterable by
+  film, cinema and date, organised by day.
+- **Release Radar** — browse upcoming releases (tiles, a date-grouped list,
+  or a real month calendar), filter by release type or "Mainstream only",
+  search by title/director, tap a tile to preview its session times without
+  committing to your watchlist, and search all of TMDB (including
+  already-released films) to add anything the discover window missed.
+- **Watchlist** — every tracked movie's sessions, organised by day and
+  noting cinema + format, with ticket links; filter by cinema/date or by
+  released/coming soon/TBA.
+- **Settings** — add/remove cinemas, set **blanket** rules (alert on *any*
+  new session at a cinema) or **targeted** rules (alert only for one
+  watchlisted movie there), manage hidden movies, and a storage-backend
+  banner that tells you straight away whether your data will actually
+  persist (see "Deploying" below).
+- A **"Run check now"** button (and a 45s client-side interval) triggers a
+  real background check on demand; `vercel.json` wires the same endpoint to
+  a real cron schedule if you deploy it.
 
 ## Getting started
 
@@ -41,7 +48,7 @@ npm run dev
 
 Then open http://localhost:3000. The dashboard seeds itself with a handful
 of Sydney/Melbourne cinemas and tracked movies on first load — add, remove,
-and rewire everything from the Tracking Matrix tab.
+and rewire everything from the Settings tab (the gear icon in the header).
 
 ## Deploying so it runs all the time
 
@@ -218,7 +225,7 @@ away too.
 
 Implement `CinemaScraper` (see `lib/scrapers/types.ts`) against the
 venue's real site and register it in `lib/scrapers/index.ts` and the
-`PROVIDER_OPTIONS` list in `components/TrackingMatrixTab.tsx` (plus
+`PROVIDER_OPTIONS` list in `components/SettingsTab.tsx` (plus
 `lib/cinemaSearch.ts` if it should be searchable by name rather than a
 fixed single venue). Nothing else needs to change.
 

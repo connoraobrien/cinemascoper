@@ -1,14 +1,18 @@
 "use client";
 
-import { BellIcon, FilmIcon, RefreshIcon } from "./Icons";
+import { BellIcon, GearIcon, RefreshIcon, ScopeReelLogo } from "./Icons";
 import { formatRelative } from "@/lib/dateUtils";
 
-export type TabKey = "releases" | "matrix" | "feed" | "watchlist";
+export type TabKey = "alerts" | "sessions" | "releases" | "watchlist" | "settings";
 
+// Ordered the way Connor actually reaches for them day to day — Alerts
+// first, cinema/rule management tucked away behind the gear icon instead
+// (see the Settings button below) rather than taking up a tab he said he
+// won't use as often.
 const TABS: { key: TabKey; label: string }[] = [
-  { key: "releases", label: "Upcoming Releases" },
-  { key: "matrix", label: "Tracking Matrix" },
-  { key: "feed", label: "Session Times Feed" },
+  { key: "alerts", label: "Alerts" },
+  { key: "sessions", label: "Session Times" },
+  { key: "releases", label: "Release Radar" },
   { key: "watchlist", label: "Watchlist" },
 ];
 
@@ -32,19 +36,21 @@ export function Nav({
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3.5">
         <div className="flex items-center gap-2.5">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-soft text-accent">
-            <FilmIcon className="h-4 w-4" />
+            <ScopeReelLogo className="h-5 w-5" />
           </span>
           <div>
-            <p className="text-sm font-semibold leading-tight text-base-100">CinemaScoper</p>
+            <p className="font-display text-base font-semibold leading-tight tracking-wide text-base-100">
+              CinemaScoper
+            </p>
             <p className="text-[11px] leading-tight text-base-500">AU release radar &amp; session alerts</p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => onTabChange("feed")}
+            onClick={() => onTabChange("alerts")}
             className="relative inline-flex h-9 w-9 items-center justify-center rounded-lg border border-base-700 text-base-300 hover:border-base-600 hover:text-base-100"
-            title="Session times feed"
+            title="Alerts"
           >
             <BellIcon className="h-4 w-4" />
             {unreadCount > 0 && (
@@ -55,10 +61,20 @@ export function Nav({
           </button>
 
           <button
+            onClick={() => onTabChange("settings")}
+            className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border text-base-300 hover:border-base-600 hover:text-base-100 ${
+              activeTab === "settings" ? "border-accent-dim/60 bg-accent-soft text-accent" : "border-base-700"
+            }`}
+            title="Settings — manage cinemas &amp; alert rules"
+          >
+            <GearIcon className="h-4 w-4" />
+          </button>
+
+          <button
             onClick={onRunCheck}
             disabled={polling}
             className="inline-flex items-center gap-1.5 rounded-lg border border-base-700 bg-base-900 px-3 py-2 text-sm font-medium text-base-200 hover:border-base-600 disabled:opacity-60"
-            title="Simulate a background check for new session times"
+            title="Check your cinemas for new session times right now"
           >
             <RefreshIcon className={`h-4 w-4 ${polling ? "animate-spin" : ""}`} />
             <span className="hidden sm:inline">{polling ? "Checking…" : "Run check now"}</span>

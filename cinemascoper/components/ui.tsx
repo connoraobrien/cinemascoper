@@ -1,6 +1,19 @@
 import type { ReactNode } from "react";
 import { ReleaseType } from "@/lib/clientTypes";
 
+// "Theatrical" rather than "Standard Theatrical" — fits on one line on a filter chip. The
+// underlying ReleaseType value is left as-is (it's the data model, and "Standard Theatrical" vs
+// "Limited Release" is a meaningful distinction) — this only shortens what's displayed.
+const RELEASE_TYPE_LABEL: Record<ReleaseType, string> = {
+  "Standard Theatrical": "Theatrical",
+  "Limited Release": "Limited Release",
+  "Film Festival": "Film Festival",
+};
+
+export function releaseTypeLabel(type: ReleaseType): string {
+  return RELEASE_TYPE_LABEL[type];
+}
+
 export function ReleaseTypeBadge({ type }: { type: ReleaseType }) {
   const styles: Record<ReleaseType, string> = {
     "Standard Theatrical": "bg-accent-soft text-accent border-accent-dim/40",
@@ -9,7 +22,7 @@ export function ReleaseTypeBadge({ type }: { type: ReleaseType }) {
   };
   return (
     <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium tracking-wide ${styles[type]}`}>
-      {type}
+      {RELEASE_TYPE_LABEL[type]}
     </span>
   );
 }

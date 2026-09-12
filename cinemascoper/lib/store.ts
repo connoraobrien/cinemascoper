@@ -28,6 +28,9 @@ function emptyDB(): DB {
     sessions: [],
     notifications: [],
     lastPollAt: null,
+    manualMovies: [],
+    hiddenMovieIds: [],
+    trackedReleaseDates: {},
   };
 }
 
@@ -69,7 +72,11 @@ function persistToDisk(db: DB) {
  */
 async function loadDB(): Promise<DB> {
   if (kvConfigured()) {
-    return (await kvLoad()) ?? emptyDB();
+    // Merged with emptyDB() the same way the file backend merges below —
+    // a DB written by an older deploy (before a field like `manualMovies`
+    // or `trackedReleaseDates` existed) would otherwise come back missing
+    // those keys entirely and crash the first thing that reads them.
+    return { ...emptyDB(), ...((await kvLoad()) ?? {}) };
   }
   if (!globalThis.__cinemascoperDB) {
     globalThis.__cinemascoperDB = loadFromDisk();
@@ -107,4 +114,17 @@ export async function readDB(): Promise<DB> {
 /** Test/dev helper: wipe the store back to empty and persist. */
 export async function resetDB() {
   await saveDB(emptyDB());
+}
+
+/**
+ * Which backend is actually active right now — surfaced in the Settings
+ * tab so "does my data actually save?" is something the app can answer
+ * for itself instead of Connor having to guess. The file backend works
+ * fine for local dev, but silently does *not* persist across cold starts
+ * on Vercel's stateless functions (a fresh instance starts from an empty
+ * in-memory DB and an unwritable-in-practice filesystem) — that mismatch,
+ * not a code bug, is the usual cause of "my cinemas don't save".
+ */
+export function storageBackend(): "kv" | "file" {
+  return kvConfigured() ? "kv" : "file";
 }

@@ -39,6 +39,9 @@ function mapFormat(screenTypeName: string | undefined): SessionFormat {
   if (s.includes("imax")) return "IMAX";
   if (s.includes("gold")) return "Gold Class";
   if (s.includes("vmax")) return "IMAX"; // Event's own large-format brand — closest fit we model
+  if (s.includes("70mm") || s.includes("70 mm")) return "70mm";
+  if (s.includes("extreme")) return "Extreme Screen";
+  if (s.includes("subtitle")) return "Subtitled";
   return "2D";
 }
 

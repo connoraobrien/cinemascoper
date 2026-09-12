@@ -56,8 +56,20 @@ export async function DELETE(req: NextRequest) {
     db.cinemas = db.cinemas.filter((c) => c.id !== cinemaId);
     // Nothing left for these to refer to once the cinema itself is gone.
     db.alertRules = db.alertRules.filter((r) => r.cinemaId !== cinemaId);
+
+    const droppedSessionIds = new Set(db.sessions.filter((s) => s.cinemaId === cinemaId).map((s) => s.id));
     db.sessions = db.sessions.filter((s) => s.cinemaId !== cinemaId);
-    db.notifications = db.notifications.filter((n) => n.cinemaId !== cinemaId);
+
+    // "new-session" notifications are digests that can span several
+    // cinemas (see AppNotification's doc comment in lib/types.ts) — drop
+    // just this cinema's sessions out of each one, and only remove the
+    // notification entirely if that empties it. "release-date-change"
+    // notifications aren't tied to a cinema at all.
+    db.notifications = db.notifications
+      .map((n) =>
+        n.kind === "new-session" ? { ...n, sessionIds: n.sessionIds.filter((id) => !droppedSessionIds.has(id)) } : n
+      )
+      .filter((n) => n.kind !== "new-session" || n.sessionIds.length > 0);
   });
 
   return NextResponse.json(await buildState());

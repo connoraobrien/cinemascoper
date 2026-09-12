@@ -54,10 +54,19 @@ const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500";
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const MAX_MOVIES = 50; // bounds discover pages fetched and detail lookups made
-const MAX_PAGES = 4; // TMDB returns 20 results/page
+const MAX_MOVIES = 80; // bounds discover pages fetched and detail lookups made
+const MAX_PAGES = 6; // TMDB returns 20 results/page
 const LOOKBACK_DAYS = 14;
-const LOOKAHEAD_DAYS = 180; // ~6 months of upcoming releases
+const LOOKAHEAD_DAYS = 270; // ~9 months of upcoming releases — wider than a typical "coming soon" page on
+// purpose, since a single-cinema/limited release can be locked in that far out and Connor would
+// rather scroll past more titles than miss one; the "Mainstream releases" filter (popularity-based,
+// see ReleasesTab) is the intended way to cut back down to the big titles day-to-day.
+
+/** A movie a mainstream-only filter should keep — TMDB's own popularity score, not vote count
+ * (which skews toward old, already-widely-rated titles over new releases). Chosen by eyeballing
+ * typical scores for wide theatrical releases vs. the long tail of festival/limited entries TMDB
+ * also tracks for AU; not scientifically tuned. */
+export const MAINSTREAM_POPULARITY_THRESHOLD = 15;
 
 let cache: { at: number; movies: Movie[] } | null = null;
 
@@ -93,6 +102,7 @@ interface TmdbDiscoverResult {
   overview: string;
   poster_path: string | null;
   release_date: string;
+  popularity?: number;
 }
 
 interface TmdbReleaseDateEntry {
@@ -100,11 +110,37 @@ interface TmdbReleaseDateEntry {
   type: number; // 1 Premiere, 2 Theatrical (limited), 3 Theatrical, 4 Digital, 5 Physical, 6 TV
 }
 
+interface TmdbCrewMember {
+  job: string;
+  name: string;
+}
+
+interface TmdbVideo {
+  site: string; // "YouTube" is the only one we care about
+  type: string; // "Trailer" | "Teaser" | …
+  key: string;
+  official?: boolean;
+}
+
 interface TmdbDetail {
   id: number;
+  title: string;
+  overview: string;
+  poster_path: string | null;
+  release_date: string;
+  popularity?: number;
   runtime: number | null;
   genres: { id: number; name: string }[];
   release_dates?: { results: { iso_3166_1: string; release_dates: TmdbReleaseDateEntry[] }[] };
+  credits?: { crew: TmdbCrewMember[] };
+  videos?: { results: TmdbVideo[] };
+}
+
+export interface MovieSearchResult {
+  tmdbId: number;
+  title: string;
+  releaseDate: string; // may be "" for an unannounced/TBA title
+  posterUrl?: string;
 }
 
 async function tmdbGet<T>(path: string, apiKey: string, params: Record<string, string>): Promise<T | null> {
@@ -132,6 +168,46 @@ function auReleaseInfo(detail: TmdbDetail): { releaseType: ReleaseType; releaseD
     releaseDate: earliest.release_date.slice(0, 10),
   };
 }
+
+function directorFrom(detail: TmdbDetail): string | undefined {
+  return detail.credits?.crew?.find((c) => c.job === "Director")?.name;
+}
+
+/** Prefers an official YouTube trailer, then any YouTube trailer, then an official teaser —
+ * TMDB doesn't always have a "Trailer" entry yet for a far-out release. */
+function trailerUrlFrom(detail: TmdbDetail): string | undefined {
+  const videos = (detail.videos?.results ?? []).filter((v) => v.site === "YouTube");
+  const pick =
+    videos.find((v) => v.type === "Trailer" && v.official) ??
+    videos.find((v) => v.type === "Trailer") ??
+    videos.find((v) => v.type === "Teaser" && v.official) ??
+    videos.find((v) => v.type === "Teaser");
+  return pick ? `https://www.youtube.com/watch?v=${pick.key}` : undefined;
+}
+
+/** Shared mapping from a TMDB detail response (`append_to_response=release_dates,credits,videos`)
+ * to our own `Movie` shape — used both for the bulk discover fetch below and for adding a single
+ * movie by id via the "search all of TMDB" flow (see `fetchTmdbMovieById`). */
+function mapDetailToMovie(detail: TmdbDetail): Movie {
+  const { releaseType, releaseDate } = auReleaseInfo(detail);
+  const id = `tmdb-${detail.id}`;
+  return {
+    id,
+    title: detail.title,
+    releaseType,
+    releaseDate: releaseDate ?? detail.release_date ?? "",
+    runtimeMinutes: detail.runtime ?? 0,
+    genres: detail.genres.map((g) => g.name),
+    synopsis: detail.overview || "No synopsis available yet.",
+    posterColor: fallbackGradient(id),
+    posterUrl: detail.poster_path ? `${TMDB_IMAGE_BASE}${detail.poster_path}` : undefined,
+    director: directorFrom(detail),
+    trailerUrl: trailerUrlFrom(detail),
+    popularity: detail.popularity,
+  };
+}
+
+const DETAIL_APPEND = "release_dates,credits,videos";
 
 async function fetchFromTmdb(apiKey: string): Promise<Movie[]> {
   const now = new Date();
@@ -162,26 +238,51 @@ async function fetchFromTmdb(apiKey: string): Promise<Movie[]> {
 
   const movies: Movie[] = [];
   for (const d of discovered.slice(0, MAX_MOVIES)) {
-    const detail = await tmdbGet<TmdbDetail>(`/movie/${d.id}`, apiKey, { append_to_response: "release_dates" });
+    const detail = await tmdbGet<TmdbDetail>(`/movie/${d.id}`, apiKey, { append_to_response: DETAIL_APPEND });
     if (!detail) continue;
-
-    const { releaseType, releaseDate } = auReleaseInfo(detail);
-    const id = `tmdb-${d.id}`;
-
-    movies.push({
-      id,
-      title: d.title,
-      releaseType,
-      releaseDate: releaseDate ?? d.release_date,
-      runtimeMinutes: detail.runtime ?? 0,
-      genres: detail.genres.map((g) => g.name),
-      synopsis: d.overview || "No synopsis available yet.",
-      posterColor: fallbackGradient(id),
-      posterUrl: d.poster_path ? `${TMDB_IMAGE_BASE}${d.poster_path}` : undefined,
-    });
+    movies.push({ ...mapDetailToMovie(detail), popularity: detail.popularity ?? d.popularity });
   }
 
   return movies.sort((a, b) => a.releaseDate.localeCompare(b.releaseDate));
+}
+
+/**
+ * Backs the "search all of TMDB" box (Watchlist tab) — for a film that
+ * isn't in the current discover window: not yet locked into a wide AU
+ * release, an old title getting a re-release (e.g. the Ritz's 70mm
+ * screenings), or anything else `getMovies()` wouldn't have surfaced.
+ * Lightweight on purpose (no per-result detail call) — a detail lookup
+ * only happens for the one result Connor actually picks, via
+ * `fetchTmdbMovieById`.
+ */
+export async function searchTmdbMovies(query: string): Promise<MovieSearchResult[]> {
+  const apiKey = process.env.TMDB_API_KEY;
+  const q = query.trim();
+  if (!apiKey || !q) return [];
+
+  const data = await tmdbGet<{ results: TmdbDiscoverResult[] }>("/search/movie", apiKey, {
+    query: q,
+    include_adult: "false",
+    region: "AU",
+  });
+  if (!data) return [];
+
+  return data.results.slice(0, 12).map((r) => ({
+    tmdbId: r.id,
+    title: r.title,
+    releaseDate: r.release_date ?? "",
+    posterUrl: r.poster_path ? `${TMDB_IMAGE_BASE}${r.poster_path}` : undefined,
+  }));
+}
+
+/** Fetches full detail for one TMDB movie id and maps it to our `Movie` shape — used when Connor
+ * picks a result from the search above to add it (see `db.manualMovies` in `lib/types.ts`). */
+export async function fetchTmdbMovieById(tmdbId: number): Promise<Movie | null> {
+  const apiKey = process.env.TMDB_API_KEY;
+  if (!apiKey) return null;
+  const detail = await tmdbGet<TmdbDetail>(`/movie/${tmdbId}`, apiKey, { append_to_response: DETAIL_APPEND });
+  if (!detail) return null;
+  return mapDetailToMovie(detail);
 }
 
 /**

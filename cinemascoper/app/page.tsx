@@ -4,8 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "@/lib/clientTypes";
 import { Nav, TabKey } from "@/components/Nav";
 import { ReleasesTab } from "@/components/ReleasesTab";
-import { TrackingMatrixTab } from "@/components/TrackingMatrixTab";
-import { SessionFeedTab } from "@/components/SessionFeedTab";
+import { SettingsTab } from "@/components/SettingsTab";
+import { AlertsTab } from "@/components/AlertsTab";
+import { SessionTimesTab } from "@/components/SessionTimesTab";
 import { WatchlistTab } from "@/components/WatchlistTab";
 
 // How often the dashboard re-checks in the background while the tab is
@@ -30,7 +31,7 @@ async function jsonFetch<T = AppState>(url: string, init?: RequestInit): Promise
 export default function Home() {
   const [state, setState] = useState<AppState | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<TabKey>("releases");
+  const [tab, setTab] = useState<TabKey>("alerts");
   const [polling, setPolling] = useState(false);
   const [selectedWatchlistId, setSelectedWatchlistId] = useState<string | null>(null);
   const loadedOnce = useRef(false);
@@ -83,18 +84,30 @@ export default function Home() {
     [state]
   );
 
-  const selectFromReleases = useCallback(
-    async (movieId: string) => {
-      if (!state) return;
-      if (!state.watchlist.some((m) => m.id === movieId)) {
-        const next = await jsonFetch<AppState>("/api/watchlist", { method: "POST", body: JSON.stringify({ movieId }) });
-        setState(next);
-      }
-      setSelectedWatchlistId(movieId);
-      setTab("watchlist");
-    },
-    [state]
-  );
+  // Adding a movie found via the "search all of TMDB" box: first make sure
+  // the app knows about it at all (it may be well outside the normal
+  // discover window — see lib/allMovies.ts), then track it, same as any
+  // other movie.
+  const addMovieByTmdbId = useCallback(async (tmdbId: number) => {
+    await jsonFetch("/api/movies", { method: "POST", body: JSON.stringify({ tmdbId }) });
+    const movieId = `tmdb-${tmdbId}`;
+    const next = await jsonFetch<AppState>("/api/watchlist", { method: "POST", body: JSON.stringify({ movieId }) });
+    setState(next);
+    setSelectedWatchlistId(movieId);
+    setTab("watchlist");
+  }, []);
+
+  const hideMovie = useCallback(async (movieId: string) => {
+    const next = await jsonFetch<AppState>("/api/hidden-movies", { method: "POST", body: JSON.stringify({ movieId }) });
+    setState(next);
+  }, []);
+
+  const unhideMovie = useCallback(async (movieId: string) => {
+    const next = await jsonFetch<AppState>(`/api/hidden-movies?movieId=${encodeURIComponent(movieId)}`, {
+      method: "DELETE",
+    });
+    setState(next);
+  }, []);
 
   const addCinema = useCallback(
     async (input: { name: string; city: string; suburb: string; provider: string; providerId: string }) => {
@@ -182,37 +195,26 @@ export default function Home() {
           </div>
         )}
 
-        {tab === "releases" && (
-          <ReleasesTab
-            movies={state.movies}
-            trackedIds={trackedIds}
-            onToggleTrack={toggleTrack}
-            onSelectMovie={selectFromReleases}
-          />
-        )}
-
-        {tab === "matrix" && (
-          <TrackingMatrixTab
-            cinemas={state.cinemas}
-            watchlist={state.watchlist}
-            alertRules={state.alertRules}
-            sessions={state.sessions}
-            onAddCinema={addCinema}
-            onRemoveCinema={removeCinema}
-            onAddRule={addRule}
-            onRemoveRule={removeRule}
-          />
-        )}
-
-        {tab === "feed" && (
-          <SessionFeedTab
+        {tab === "alerts" && (
+          <AlertsTab
             notifications={state.notifications}
-            sessions={state.sessions}
-            myCinemaIds={myCinemaIds}
             onMarkRead={markRead}
             onMarkAllRead={markAllRead}
             onDeleteNotification={deleteNotification}
             onClearAllNotifications={clearAllNotifications}
+          />
+        )}
+
+        {tab === "sessions" && <SessionTimesTab sessions={state.sessions} myCinemas={state.cinemas} />}
+
+        {tab === "releases" && (
+          <ReleasesTab
+            movies={state.movies}
+            trackedIds={trackedIds}
+            sessions={state.sessions}
+            myCinemaIds={myCinemaIds}
+            onToggleTrack={toggleTrack}
+            onHide={hideMovie}
           />
         )}
 
@@ -224,6 +226,22 @@ export default function Home() {
             selectedId={selectedWatchlistId}
             onSelect={setSelectedWatchlistId}
             onUntrack={toggleTrack}
+            onAddMovie={addMovieByTmdbId}
+          />
+        )}
+
+        {tab === "settings" && (
+          <SettingsTab
+            cinemas={state.cinemas}
+            watchlist={state.watchlist}
+            alertRules={state.alertRules}
+            storage={state.storage}
+            hiddenMovies={state.hiddenMovies}
+            onAddCinema={addCinema}
+            onRemoveCinema={removeCinema}
+            onAddRule={addRule}
+            onRemoveRule={removeRule}
+            onUnhideMovie={unhideMovie}
           />
         )}
       </main>

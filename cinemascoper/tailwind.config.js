@@ -43,6 +43,9 @@ module.exports = {
           "Segoe UI",
           "sans-serif",
         ],
+        // The header wordmark only — loaded via next/font/google in app/layout.tsx,
+        // which sets --font-display on <html>.
+        display: ["var(--font-display)", "sans-serif"],
       },
     },
   },

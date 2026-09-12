@@ -1,4 +1,4 @@
-import { Session } from "../types";
+import { Session, SessionFormat } from "../types";
 import { makeId } from "../ids";
 import { CinemaScraper } from "./types";
 import { slugifyTitle } from "./titleMatch";
@@ -50,6 +50,22 @@ function extractTimes(html: string): { name: string; sessionId: string | null; t
     out.push({ name, sessionId, time: timeMatch[1].trim() });
   }
   return out;
+}
+
+// The Ritz regularly runs "Celluloid Dreams" 70mm re-release seasons and
+// other special-format screenings (their own `data-name` attribute is the
+// only place that kind of detail shows up in this markup — not
+// separately structured) — best-effort keyword match against it, not
+// live-confirmed against an actual 70mm session's exact wording, so this
+// is a heuristic rather than something reverse-engineered from a real
+// example. Falls back to plain "2D" when nothing matches, same as before.
+function mapFormat(sessionName: string): SessionFormat {
+  const s = sessionName.toLowerCase();
+  if (s.includes("70mm") || s.includes("70 mm")) return "70mm";
+  if (s.includes("imax")) return "IMAX";
+  if (s.includes("extreme")) return "Extreme Screen";
+  if (s.includes("subtitle") || s.includes("subtitled") || s.includes("open caption")) return "Subtitled";
+  return "2D";
 }
 
 function parseTimeOfDay(time: string): { hour: number; minute: number } | null {
@@ -118,7 +134,7 @@ export const ritzRandwickScraper: CinemaScraper = {
           movieId: movie.id,
           cinemaId: cinema.id,
           startsAt: startsAtIso,
-          format: "2D",
+          format: mapFormat(row.name),
           publishedAt: now.toISOString(),
           ticketUrl: row.sessionId
             ? `${BASE_URL}/tickets?c=${TICKET_CINEMA_CODE}&s=${row.sessionId}`

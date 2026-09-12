@@ -103,6 +103,22 @@ export function sydneyIsoWallClockToUtc(isoLike: string): Date | null {
   return sydneyWallClockToUtc(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute));
 }
 
+/** The calendar date *as read on a clock in Sydney* for a UTC instant, as a
+ * sortable "YYYY-MM-DD" key — used to group sessions by day for display
+ * (notification digests, the cinema/date breakdown in the Watchlist and
+ * Session Times tabs) without re-deriving Sydney's date from a raw UTC
+ * instant by hand at every call site. */
+export function sydneyDateKey(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: SYDNEY_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
 /** Infers the year for a "D Mon" (or similar) date with no year given,
  * assuming it's meant to be soon (never more than ~2 months in the past
  * relative to `now` — handles the December/January rollover). */

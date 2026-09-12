@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withDB } from "@/lib/store";
+import { withDB, readDB } from "@/lib/store";
 import { buildState } from "@/lib/apiState";
 import { runPoll } from "@/lib/pollEngine";
-import { getMovies } from "@/lib/movies";
+import { getAllKnownMovies } from "@/lib/allMovies";
 import { seedDefaultsIfEmpty } from "@/lib/seedDefaults";
 
 // GET has no request-derived inputs, so without this Next.js could statically
@@ -32,7 +32,7 @@ function checkCronAuth(req: NextRequest): NextResponse | null {
  * "Run check now" button, both as POST. Either verb runs the same tick.
  */
 async function tick() {
-  const allMovies = await getMovies();
+  const allMovies = await getAllKnownMovies(await readDB());
   return withDB(async (db) => {
     seedDefaultsIfEmpty(db, allMovies);
     return runPoll(db, allMovies, new Date());

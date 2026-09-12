@@ -6,19 +6,21 @@ import { makeId } from "./ids";
 const CANDIDATE_WINDOW_MIN_DAYS = -14; // still show sessions for recently-released films
 const CANDIDATE_WINDOW_MAX_DAYS = 45; // chains rarely open tickets further out than this
 
-function candidateMovies(movies: Movie[], now: Date): Movie[] {
+/**
+ * A movie is worth asking each scraper about if it's release-date-near
+ * (the normal case), OR it's something Connor has actually watchlisted —
+ * that second clause is what makes an already-released film, an obscure
+ * re-release, or anything else added via the "search all of TMDB" flow
+ * (see `lib/allMovies.ts`) actually get polled: a 1970s film the Ritz is
+ * doing a 70mm re-release of will never fall inside the normal release-date
+ * window, but if it's on the watchlist, Connor clearly wants to know.
+ */
+function candidateMovies(movies: Movie[], now: Date, watchlistedIds: Set<string>): Movie[] {
   return movies.filter((m) => {
+    if (watchlistedIds.has(m.id)) return true;
     const days = (new Date(m.releaseDate).getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
     return days >= CANDIDATE_WINDOW_MIN_DAYS && days <= CANDIDATE_WINDOW_MAX_DAYS;
   });
-}
-
-function movieTitle(movies: Movie[], id: string): string {
-  return movies.find((m) => m.id === id)?.title ?? "A tracked movie";
-}
-
-function cinemaName(cinemas: Cinema[], id: string): string {
-  return cinemas.find((c) => c.id === id)?.name ?? "a tracked cinema";
 }
 
 export interface PollSummary {
@@ -26,6 +28,76 @@ export interface PollSummary {
   cinemasChecked: number;
   newSessions: Session[];
   newNotifications: AppNotification[];
+}
+
+/**
+ * Folds a batch of newly-discovered, rule-matching sessions for one movie
+ * into notification digests: appends to whatever unread "new-session"
+ * notification for this movie already exists (so cinemas/dates accumulate
+ * across as many poll ticks as it stays unread), or starts a fresh one.
+ * See the doc comment on `AppNotification` in `lib/types.ts`.
+ */
+function foldIntoDigest(
+  db: DB,
+  movieId: string,
+  sessionIds: string[],
+  ruleType: AppNotification["ruleType"],
+  now: Date,
+  newNotifications: AppNotification[]
+) {
+  if (sessionIds.length === 0) return;
+
+  const open = db.notifications.find((n) => n.kind === "new-session" && n.movieId === movieId && !n.read);
+  if (open) {
+    open.sessionIds.push(...sessionIds);
+    open.createdAt = now.toISOString(); // bump so it resurfaces as the most recent alert
+    if (ruleType === "blanket") open.ruleType = "blanket"; // blanket coverage is the more inclusive description
+    return;
+  }
+
+  const notification: AppNotification = {
+    id: makeId("nt"),
+    createdAt: now.toISOString(),
+    read: false,
+    kind: "new-session",
+    movieId,
+    sessionIds: [...sessionIds],
+    ruleType,
+  };
+  db.notifications.unshift(notification);
+  newNotifications.push(notification);
+}
+
+/**
+ * Detects a watchlisted movie's release date moving since the last poll
+ * tick and emits a distinct "release-date-change" notification for it —
+ * kept separate from "new-session" digests since it's a different kind of
+ * update Connor asked to be able to filter independently. Only tracked for
+ * watchlisted movies: everything else's date shuffles around on TMDB
+ * constantly and would be pure noise.
+ */
+function detectReleaseDateChanges(db: DB, allMovies: Movie[], now: Date, newNotifications: AppNotification[]) {
+  for (const w of db.watchlist) {
+    const movie = allMovies.find((m) => m.id === w.movieId);
+    if (!movie || !movie.releaseDate) continue;
+
+    const previous = db.trackedReleaseDates[w.movieId];
+    if (previous && previous !== movie.releaseDate) {
+      const notification: AppNotification = {
+        id: makeId("nt"),
+        createdAt: now.toISOString(),
+        read: false,
+        kind: "release-date-change",
+        movieId: w.movieId,
+        sessionIds: [],
+        previousReleaseDate: previous,
+        newReleaseDate: movie.releaseDate,
+      };
+      db.notifications.unshift(notification);
+      newNotifications.push(notification);
+    }
+    db.trackedReleaseDates[w.movieId] = movie.releaseDate;
+  }
 }
 
 /**
@@ -41,9 +113,15 @@ export interface PollSummary {
  * budget against every other cinema's requests.
  */
 export async function runPoll(db: DB, allMovies: Movie[], now: Date = new Date()): Promise<PollSummary> {
-  const candidates = candidateMovies(allMovies, now);
+  const watchlistedIds = new Set(db.watchlist.map((w) => w.movieId));
+  const candidates = candidateMovies(allMovies, now, watchlistedIds);
   const newSessions: Session[] = [];
   const newNotifications: AppNotification[] = [];
+
+  // Newly-discovered, rule-matching session ids this tick, grouped by
+  // movie so each movie folds into at most one digest per tick (see
+  // `foldIntoDigest`) rather than one append per session.
+  const matchedByMovie = new Map<string, { sessionIds: string[]; ruleType: AppNotification["ruleType"] }>();
 
   for (const cinema of db.cinemas) {
     const scraper = getScraperForProvider(cinema.provider);
@@ -67,32 +145,20 @@ export async function runPoll(db: DB, allMovies: Movie[], now: Date = new Date()
       newSessions.push(session);
 
       const matches = matchRulesForSession(session, db.alertRules, db.watchlist);
-      for (const { rule } of matches) {
-        const notification: AppNotification = {
-          id: makeId("nt"),
-          createdAt: now.toISOString(),
-          read: false,
-          kind: "new-session",
-          movieId: session.movieId,
-          cinemaId: session.cinemaId,
-          sessionId: session.id,
-          ruleType: rule.type,
-          message:
-            rule.type === "blanket"
-              ? `${cinemaName(db.cinemas, session.cinemaId)} just published a new session for "${movieTitle(
-                  allMovies,
-                  session.movieId
-                )}".`
-              : `New session for your tracked movie "${movieTitle(allMovies, session.movieId)}" at ${cinemaName(
-                  db.cinemas,
-                  session.cinemaId
-                )}.`,
-        };
-        db.notifications.unshift(notification);
-        newNotifications.push(notification);
-      }
+      if (matches.length === 0) continue;
+
+      const entry = matchedByMovie.get(session.movieId) ?? { sessionIds: [], ruleType: matches[0].rule.type };
+      entry.sessionIds.push(session.id);
+      if (matches.some((m) => m.rule.type === "blanket")) entry.ruleType = "blanket";
+      matchedByMovie.set(session.movieId, entry);
     }
   }
+
+  for (const [movieId, { sessionIds, ruleType }] of matchedByMovie) {
+    foldIntoDigest(db, movieId, sessionIds, ruleType, now, newNotifications);
+  }
+
+  detectReleaseDateChanges(db, allMovies, now, newNotifications);
 
   db.lastPollAt = now.toISOString();
 
@@ -102,4 +168,10 @@ export async function runPoll(db: DB, allMovies: Movie[], now: Date = new Date()
     newSessions,
     newNotifications,
   };
+}
+
+// Re-exported for any caller that still wants a human-readable cinema name
+// from a poll-time context (kept for parity with the old module shape).
+export function cinemaNameFor(cinemas: Cinema[], id: string): string {
+  return cinemas.find((c) => c.id === id)?.name ?? "a tracked cinema";
 }
