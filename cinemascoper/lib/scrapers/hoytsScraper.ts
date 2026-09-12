@@ -14,11 +14,17 @@ import { titlesMatch } from "./titleMatch";
  *  - `GET https://apim-aea.hoyts.com.au/cinemaapi-au-live/api/sessions/<code>`
  *    every upcoming session at one cinema (all dates in one response):
  *    `{ id, cinemaId, movieId, date, utcDate, typeId, screenName, ... }[]`.
- *    `date` is already local (Australian) wall-clock time, no timezone
- *    math needed. `<code>` is the Hoyts cinema code (e.g. "BROADW" for
- *    Hoyts Broadway) — `Cinema.providerId`, resolved via `/api/cinemas`
- *    by the cinema search in the "Add a cinema" form rather than typed by
- *    hand (see `app/api/cinema-search/route.ts`).
+ *    `date` is local (Australian) wall-clock time with no offset — don't
+ *    `new Date()` it directly (see `sydneyIsoWallClockToUtc`'s doc comment
+ *    for why that's wrong on a server). Use `utcDate` instead — a real ISO
+ *    string with an explicit `+00:00` offset, confirmed via a live fetch —
+ *    which `new Date()` parses correctly regardless of server timezone.
+ *    `<code>` is the Hoyts cinema code (e.g. "BROADW" for Hoyts Broadway)
+ *    — `Cinema.providerId`, resolved via `/api/cinemas` by the cinema
+ *    search in the "Add a cinema" form rather than typed by hand (see
+ *    `app/api/cinema-search/route.ts`).
+ *  - Ticket links: `https://www.hoyts.com.au/orders/tickets?cinemaId=<code>&sessionId=<id>`
+ *    — confirmed live against hoyts.com.au's own session-time buttons.
  *
  * `typeId` maps onto our small `SessionFormat` enum only approximately —
  * Hoyts has more screen types (Xtremescreen, LUX, D-BOX, …) than we model.
@@ -46,7 +52,8 @@ interface HoytsSession {
   id: number;
   cinemaId: string;
   movieId: string;
-  date: string; // local wall-clock, no offset, e.g. "2026-09-12T10:45:00"
+  date: string; // local wall-clock, no offset, e.g. "2026-09-12T10:45:00" — don't parse this one, see doc comment above
+  utcDate: string; // real UTC, e.g. "2026-09-12T02:45:00+00:00" — use this instead
   typeId?: string;
   disabled?: boolean;
 }
@@ -82,7 +89,7 @@ export const hoytsScraper: CinemaScraper = {
       const movie = candidateMovies.find((m) => titlesMatch(m.title, hoytsTitle));
       if (!movie) continue;
 
-      const startsAt = new Date(raw.date);
+      const startsAt = new Date(raw.utcDate);
       if (Number.isNaN(startsAt.getTime()) || startsAt.getTime() < now.getTime()) continue;
       const startsAtIso = startsAt.toISOString();
 
@@ -98,6 +105,7 @@ export const hoytsScraper: CinemaScraper = {
         startsAt: startsAtIso,
         format: mapFormat(raw.typeId),
         publishedAt: now.toISOString(),
+        ticketUrl: `https://www.hoyts.com.au/orders/tickets?cinemaId=${encodeURIComponent(cinema.providerId)}&sessionId=${raw.id}`,
       });
     }
 

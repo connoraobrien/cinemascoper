@@ -22,6 +22,12 @@ import { sydneyTodayParts, sydneyWallClockToUtc } from "./sydneyTime";
  * blocks, one per movie, with `<h3 class="cinema-times__movie-title">`
  * and one `<span class="times-calendar-times__el__time">` per session.
  *
+ * Ticket links: each session time is itself inside a real `<a
+ * class="times-calendar-times__button" href="...">` pointing straight at
+ * that cinema's *own* booking page for that exact session (confirmed
+ * live) — flicks is just aggregating, not a ticket seller itself — so
+ * that outbound href is used directly rather than linking back to flicks.
+ *
  * Known limitation: times are treated as Australian Eastern time
  * (Sydney/Melbourne/Brisbane's clock, DST-aware) regardless of the
  * cinema's actual state — fine for every cinema Connor has added so far,
@@ -39,12 +45,13 @@ function parseTimeOfDay(time: string): { hour: number; minute: number } | null {
   return { hour, minute: Number(m[2]) };
 }
 
-function extractMovieBlocks(html: string): { title: string; times: string[] }[] {
+function extractMovieBlocks(html: string): { title: string; sessions: { time: string; ticketUrl?: string }[] }[] {
   const chunks = html.split("<article").slice(1); // first split part is before any article
+  const sessionRe = /<a[^>]*class="times-calendar-times__button[^"]*"[^>]*href="([^"]+)"[^>]*>[\s\S]*?times-calendar-times__el__time">([^<]+)</g;
   return chunks.map((chunk) => {
     const title = chunk.match(/cinema-times__movie-title">([^<]+)</)?.[1]?.trim() ?? "";
-    const times = [...chunk.matchAll(/times-calendar-times__el__time">([^<]+)</g)].map((m) => m[1].trim());
-    return { title, times };
+    const sessions = [...chunk.matchAll(sessionRe)].map((m) => ({ ticketUrl: m[1], time: m[2].trim() }));
+    return { title, sessions };
   });
 }
 
@@ -82,8 +89,8 @@ export const flicksScraper: CinemaScraper = {
         const movie = candidateMovies.find((m) => titlesMatch(m.title, block.title));
         if (!movie) continue;
 
-        for (const timeStr of block.times) {
-          const parsed = parseTimeOfDay(timeStr);
+        for (const session of block.sessions) {
+          const parsed = parseTimeOfDay(session.time);
           if (!parsed) continue;
 
           const startsAt = sydneyWallClockToUtc(
@@ -108,6 +115,7 @@ export const flicksScraper: CinemaScraper = {
             startsAt: startsAtIso,
             format: "2D",
             publishedAt: now.toISOString(),
+            ticketUrl: session.ticketUrl,
           });
         }
       }

@@ -27,16 +27,27 @@ import { sydneyTodayParts, sydneyWallClockToUtc } from "./sydneyTime";
  *
  * `Cinema.providerId` is unused here — this scraper is tied to one fixed
  * venue.
+ *
+ * Ticket links: each session `<a>` also carries a `data-id` (the session
+ * id) — `https://www.ritzcinemas.com.au/tickets?c=0000000004&s=<data-id>`
+ * is exactly the URL that same `<a>`'s real `href` points to, confirmed
+ * live. `c=0000000004` is Ritz's own fixed cinema code (a constant, since
+ * this scraper only ever covers this one venue).
  */
 
 const BASE_URL = "https://www.ritzcinemas.com.au";
+const TICKET_CINEMA_CODE = "0000000004";
 
-function extractTimes(html: string): { name: string; time: string }[] {
-  const liRegex = /<li[^>]*>\s*<a class="Link sessions-link"[^>]*data-name="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
-  const out: { name: string; time: string }[] = [];
+function extractTimes(html: string): { name: string; sessionId: string | null; time: string }[] {
+  const liRegex = /<li[^>]*>\s*<a class="Link sessions-link"([^>]*)>([\s\S]*?)<\/a>/g;
+  const out: { name: string; sessionId: string | null; time: string }[] = [];
   for (const m of html.matchAll(liRegex)) {
+    const attrs = m[1];
     const timeMatch = m[2].match(/<span class="Time">([^<]+)<\/span>/);
-    if (timeMatch) out.push({ name: m[1], time: timeMatch[1].trim() });
+    if (!timeMatch) continue;
+    const name = attrs.match(/data-name="([^"]*)"/)?.[1] ?? "";
+    const sessionId = attrs.match(/data-id="(\d+)"/)?.[1] ?? null;
+    out.push({ name, sessionId, time: timeMatch[1].trim() });
   }
   return out;
 }
@@ -109,6 +120,9 @@ export const ritzRandwickScraper: CinemaScraper = {
           startsAt: startsAtIso,
           format: "2D",
           publishedAt: now.toISOString(),
+          ticketUrl: row.sessionId
+            ? `${BASE_URL}/tickets?c=${TICKET_CINEMA_CODE}&s=${row.sessionId}`
+            : undefined,
         });
       }
     }

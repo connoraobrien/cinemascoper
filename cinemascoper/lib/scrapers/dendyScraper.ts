@@ -5,38 +5,44 @@ import { slugifyTitle } from "./titleMatch";
 
 /**
  * Dendy. Every venue runs on its own subdomain (newtown.dendy.com.au,
- * canberra.dendy.com.au, …) with a public, unauthenticated GraphQL
- * endpoint at `/graphql` — `Cinema.providerId` is that subdomain (e.g.
- * "newtown"). Reverse-engineered from what the venue's own site calls:
+ * canberra.dendy.com.au, …) with a GraphQL endpoint at `/graphql` —
+ * `Cinema.providerId` is that subdomain (e.g. "newtown"). Reverse-engineered
+ * from what the venue's own site calls:
  *
  *  - `findMovieBySlug(urlSlug: String!, siteIds: [ID])` resolves a movie
  *    by its URL slug (e.g. "practical-magic-2") to its Dendy movie id.
- *    `siteIds` must be a real, non-empty circuit id or it returns null —
- *    empirically `"36"` identifies the whole Dendy circuit (confirmed
- *    identical across two different venue subdomains), not one venue, so
- *    it's hardcoded below rather than something each cinema needs to
- *    supply.
  *  - `showingsForDate(movieId, siteIds, resultVersion, …)` returns every
  *    upcoming showing for that movie at this venue: `{ id, time,
- *    seatsRemaining, … }[]`. `time` is already a UTC ISO string. This one
- *    is *exactly* the query + variable shape the real site itself sent on
- *    a fresh page load (captured live, not reconstructed from the
- *    schema) — deliberately kept verbatim, right down to fields we don't
- *    use, rather than trimmed down to a smaller hand-written query,
- *    because this API turns out to reject some perfectly reasonable-
- *    looking smaller queries with an opaque permission error (e.g. adding
- *    a real `date`, or a `movieId` of `null`, both 403). A trimmed
- *    version might work fine — it just hasn't actually been tried against
- *    the live site, so this sticks with the one shape known to work.
- *    `resultVersion: null` (explicitly, not omitted) is what makes a
- *    *first* call for a given movie return full data rather than "nothing
- *    changed since your last check" — which is exactly what every poll
- *    tick needs, since a fresh scraper invocation has no prior version to
- *    compare against.
- *  - Passing a real `date` value, or omitting `movieId`, both get a 403
- *    permission error — this query is apparently only open for "give me
- *    everything for one already-known movie", which is exactly the shape
- *    we need per candidate movie anyway.
+ *    seatsRemaining, … }[]`. `time` is already a UTC ISO string (`"Z"`
+ *    suffix) — no conversion needed. `resultVersion: null` (explicitly,
+ *    not omitted) is what makes a *first* call for a given movie return
+ *    full data rather than "nothing changed since your last check".
+ *
+ * IMPORTANT — what actually authorizes a request here (found by live
+ * network capture, correcting an earlier wrong assumption in this file):
+ * it's three HTTP headers the real site sends on every GraphQL call —
+ * `site-id`, `circuit-id`, and `client-type: consumer` — *not* the
+ * `siteIds` GraphQL variable, which the real site itself often just sends
+ * as `[]`. Earlier versions of this scraper had no headers at all and sent
+ * a guessed constant in the `siteIds` variable instead — that guess
+ * happened to make `findMovieBySlug` succeed (it's more lenient), which
+ * masked the real problem: `showingsForDate` rejected every request with
+ * an opaque "permission" 403, so Dendy silently discovered zero sessions,
+ * ever, at every venue, the whole time. `circuit-id` is `"15"` for every
+ * Dendy venue (it identifies the Dendy brand itself, confirmed identical
+ * live across all 5 venues below); `site-id` is venue-specific — each of
+ * the 5 was read directly off that venue's own outgoing requests:
+ *
+ *   newtown 36 · canberra 34 · coorparoo 39 · portside 38 · southport 37
+ *
+ * A venue not in `SITE_IDS` has no known site-id, so this scraper can't
+ * authenticate for it and returns no sessions rather than guessing.
+ *
+ * Ticket links: clicking a showtime on the real site client-side-navigates
+ * to `https://<subdomain>.dendy.com.au/checkout/showing/<id>` — confirmed
+ * by actually clicking one and reading `window.location.href` — where
+ * `<id>` is `showingsForDate`'s own `data[].id` (its separate `showingId`
+ * field is null in practice and isn't what the URL uses, despite the name).
  *
  * We don't have Dendy's own movie-listing endpoint reverse-engineered, so
  * matching relies on guessing each candidate's slug via `slugifyTitle` —
@@ -45,7 +51,15 @@ import { slugifyTitle } from "./titleMatch";
  * showing here" rather than an error.
  */
 
-const CIRCUIT_SITE_ID = "36";
+const CIRCUIT_ID = "15";
+
+const SITE_IDS: Record<string, string> = {
+  newtown: "36",
+  canberra: "34",
+  coorparoo: "39",
+  portside: "38",
+  southport: "37",
+};
 
 const FIND_MOVIE_QUERY = `query ($urlSlug: String!, $siteIds: [ID]) {
   findMovieBySlug(urlSlug: $urlSlug, siteIds: $siteIds) {
@@ -88,11 +102,22 @@ const SHOWINGS_QUERY = `query ($ids: [ID], $movieId: ID, $movieIds: [ID], $title
   }
 }`;
 
-async function graphql<T>(subdomain: string, query: string, variables: Record<string, unknown>): Promise<T | null> {
+async function graphql<T>(
+  subdomain: string,
+  siteId: string,
+  query: string,
+  variables: Record<string, unknown>
+): Promise<T | null> {
   try {
     const res = await fetch(`https://${subdomain}.dendy.com.au/graphql`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        accept: "application/graphql-response+json,application/json;q=0.9",
+        "site-id": siteId,
+        "circuit-id": CIRCUIT_ID,
+        "client-type": "consumer",
+      },
       body: JSON.stringify({ query, variables }),
     });
     if (!res.ok) return null;
@@ -109,16 +134,17 @@ export const dendyScraper: CinemaScraper = {
 
   async discoverNewSessions({ cinema, candidateMovies, existingSessions, now }) {
     const subdomain = cinema.providerId;
-    if (!subdomain) return [];
+    const siteId = SITE_IDS[subdomain];
+    if (!subdomain || !siteId) return [];
 
     const discovered: Session[] = [];
 
     for (const movie of candidateMovies) {
       const slug = slugifyTitle(movie.title);
 
-      const found = await graphql<{ findMovieBySlug: { id: string } | null }>(subdomain, FIND_MOVIE_QUERY, {
+      const found = await graphql<{ findMovieBySlug: { id: string } | null }>(subdomain, siteId, FIND_MOVIE_QUERY, {
         urlSlug: slug,
-        siteIds: [CIRCUIT_SITE_ID],
+        siteIds: [],
       });
       const dendyMovieId = found?.findMovieBySlug?.id;
       if (!dendyMovieId) continue;
@@ -126,21 +152,19 @@ export const dendyScraper: CinemaScraper = {
       // Full variable set, matching the exact confirmed-working shape the
       // real site sent (see doc comment above) — `resultVersion: null` in
       // particular is what makes this return full data on a first call.
-      const showings = await graphql<{ showingsForDate: { data: { id: string; time: string }[] | null } }>(
-        subdomain,
-        SHOWINGS_QUERY,
-        {
-          ids: [],
-          movieId: dendyMovieId,
-          movieIds: [],
-          titleClassId: null,
-          titleClassIds: null,
-          siteIds: [],
-          everyShowingBadgeIds: [null],
-          anyShowingBadgeIds: null,
-          resultVersion: null,
-        }
-      );
+      const showings = await graphql<{
+        showingsForDate: { data: { id: string; time: string }[] | null };
+      }>(subdomain, siteId, SHOWINGS_QUERY, {
+        ids: [],
+        movieId: dendyMovieId,
+        movieIds: [],
+        titleClassId: null,
+        titleClassIds: null,
+        siteIds: [],
+        everyShowingBadgeIds: [null],
+        anyShowingBadgeIds: null,
+        resultVersion: null,
+      });
       const rows = showings?.showingsForDate?.data ?? [];
 
       for (const row of rows) {
@@ -160,6 +184,7 @@ export const dendyScraper: CinemaScraper = {
           startsAt: startsAtIso,
           format: "2D", // Dendy's own API doesn't cleanly expose screen format in this query
           publishedAt: now.toISOString(),
+          ticketUrl: `https://${subdomain}.dendy.com.au/checkout/showing/${row.id}`,
         });
       }
     }

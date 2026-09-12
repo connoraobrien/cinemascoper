@@ -3,7 +3,7 @@
 import { WatchlistMovie, JoinedSession, Cinema } from "@/lib/clientTypes";
 import { EmptyState, ReleaseTypeBadge, SectionHeading } from "./ui";
 import { formatDate, formatDateTime, daysUntil } from "@/lib/dateUtils";
-import { XIcon } from "./Icons";
+import { TicketIcon, XIcon } from "./Icons";
 
 export function WatchlistTab({
   watchlist,
@@ -133,12 +133,24 @@ function MovieDetail({
             {sessions.map((s) => (
               <li
                 key={s.id}
-                className="flex items-center justify-between rounded-lg border border-base-800 bg-base-850 px-3 py-2 text-sm"
+                className="flex items-center justify-between gap-3 rounded-lg border border-base-800 bg-base-850 px-3 py-2 text-sm"
               >
                 <span className="text-base-200">{s.cinemaName}</span>
-                <span className="text-base-400">
-                  {formatDateTime(s.startsAt)} &middot; {s.format}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="text-base-400">
+                    {formatDateTime(s.startsAt)} &middot; {s.format}
+                  </span>
+                  {s.ticketUrl && (
+                    <a
+                      href={s.ticketUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 rounded-lg border border-accent-dim/50 bg-accent-soft px-2 py-1 text-xs font-medium text-accent hover:border-accent-dim"
+                    >
+                      <TicketIcon className="h-3.5 w-3.5" /> Tickets
+                    </a>
+                  )}
+                </div>
               </li>
             ))}
           </ul>

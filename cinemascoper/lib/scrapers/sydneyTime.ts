@@ -78,6 +78,31 @@ export function sydneyTodayParts(now: Date): { year: number; month: number; day:
   return { year: get("year"), month: get("month") - 1, day: get("day") };
 }
 
+const ISO_LOCAL_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/;
+
+/**
+ * Parses an ISO-shaped "YYYY-MM-DDTHH:mm[:ss[.sss]]" string that has *no*
+ * timezone offset — several of the real cinema APIs return exactly this
+ * (their own Sydney wall-clock time, serialized without a "Z" or offset) —
+ * and returns the UTC instant it actually refers to. Returns `null` if the
+ * string doesn't match that shape.
+ *
+ * Deliberately not `new Date(thatString)`: JavaScript treats an offset-less
+ * date-time string as being in the *runtime's own* local timezone, not
+ * Sydney's — and a Vercel/serverless function's local timezone is UTC, so
+ * `new Date("2026-09-12T10:45:00")` silently produces 10:45am UTC (i.e.
+ * 8:45pm or 9:45pm Sydney, depending on daylight saving) instead of the
+ * intended 10:45am Sydney. This was a real bug in this project (Hoyts and
+ * Event Cinemas session times were off by the Sydney/UTC offset) before
+ * being routed through this instead.
+ */
+export function sydneyIsoWallClockToUtc(isoLike: string): Date | null {
+  const m = isoLike.match(ISO_LOCAL_RE);
+  if (!m) return null;
+  const [, year, month, day, hour, minute] = m;
+  return sydneyWallClockToUtc(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute));
+}
+
 /** Infers the year for a "D Mon" (or similar) date with no year given,
  * assuming it's meant to be soon (never more than ~2 months in the past
  * relative to `now` — handles the December/January rollover). */

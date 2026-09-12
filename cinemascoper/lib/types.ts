@@ -65,6 +65,7 @@ export interface Session {
   startsAt: string; // ISO datetime
   format: SessionFormat;
   publishedAt: string; // ISO datetime the session was "published" (simulated scrape discovery)
+  ticketUrl?: string; // deep link to buy tickets for this exact session, when the provider exposes one
 }
 
 export type AlertRuleType = "blanket" | "targeted";

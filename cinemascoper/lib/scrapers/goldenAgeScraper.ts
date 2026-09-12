@@ -23,6 +23,13 @@ import { inferYear, monthIndexFromAbbrev, sydneyWallClockToUtc } from "./sydneyT
  *     `inferYear`).
  */
 
+// Ticket links: each session's "buy" control on the real site is a
+// `javascript:ferve.pricing.returnEventPricing('<hash>')` call that opens
+// an in-page pricing modal, not a plain navigable URL — confirmed live,
+// and there's no separate session-specific page to link to instead. So the
+// ticket link here is the film's own page, which has that same widget
+// embedded and ready to click through, rather than guessing at a fake
+// session-specific deep link that doesn't actually exist.
 const BASE_URL = "https://www.ourgoldenage.com.au";
 const FERVE_ID_RE = /ferveID[\\"]*:[\\"]*([0-9a-f]{16,40})/i;
 const DATE_TIME_RE = /(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{1,2}):(\d{2})\s*(AM|PM)/i;
@@ -93,6 +100,7 @@ export const goldenAgeScraper: CinemaScraper = {
           startsAt: startsAtIso,
           format: "2D",
           publishedAt: now.toISOString(),
+          ticketUrl: `${BASE_URL}/film/${slug}`,
         });
       }
     }

@@ -1,8 +1,8 @@
 "use client";
 
 import { JoinedNotification, JoinedSession } from "@/lib/clientTypes";
-import { EmptyState, SectionHeading } from "./ui";
-import { CheckIcon, ClockIcon } from "./Icons";
+import { EmptyState, IconButton, SectionHeading } from "./ui";
+import { CheckIcon, ClockIcon, TicketIcon, TrashIcon } from "./Icons";
 import { formatDateTime, formatRelative } from "@/lib/dateUtils";
 
 export function SessionFeedTab({
@@ -11,12 +11,16 @@ export function SessionFeedTab({
   myCinemaIds,
   onMarkRead,
   onMarkAllRead,
+  onDeleteNotification,
+  onClearAllNotifications,
 }: {
   notifications: JoinedNotification[];
   sessions: JoinedSession[];
   myCinemaIds: Set<string>;
   onMarkRead: (id: string) => void;
   onMarkAllRead: () => void;
+  onDeleteNotification: (id: string) => void;
+  onClearAllNotifications: () => void;
 }) {
   const unread = notifications.filter((n) => !n.read).length;
   const matchedUpcoming = sessions.filter((s) => myCinemaIds.has(s.cinemaId)).slice(0, 30);
@@ -27,13 +31,25 @@ export function SessionFeedTab({
         title="Session Times Feed"
         subtitle="Alerts fired by your tracking rules, plus every upcoming session at your cinemas."
         action={
-          unread > 0 ? (
-            <button
-              onClick={onMarkAllRead}
-              className="inline-flex items-center gap-1 rounded-lg border border-base-700 px-3 py-1.5 text-xs font-medium text-base-300 hover:border-base-600 hover:text-base-100"
-            >
-              <CheckIcon className="h-3.5 w-3.5" /> Mark all read
-            </button>
+          notifications.length > 0 ? (
+            <div className="flex items-center gap-2">
+              {unread > 0 && (
+                <button
+                  onClick={onMarkAllRead}
+                  className="inline-flex items-center gap-1 rounded-lg border border-base-700 px-3 py-1.5 text-xs font-medium text-base-300 hover:border-base-600 hover:text-base-100"
+                >
+                  <CheckIcon className="h-3.5 w-3.5" /> Mark all read
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  if (window.confirm("Delete all notifications? This can't be undone.")) onClearAllNotifications();
+                }}
+                className="inline-flex items-center gap-1 rounded-lg border border-base-700 px-3 py-1.5 text-xs font-medium text-base-300 hover:border-red-800 hover:text-red-400"
+              >
+                <TrashIcon className="h-3.5 w-3.5" /> Clear all
+              </button>
+            </div>
           ) : undefined
         }
       />
@@ -59,14 +75,19 @@ export function SessionFeedTab({
                   {n.ruleType === "blanket" ? "Blanket rule" : "Targeted rule"} &middot; {formatRelative(n.createdAt)}
                 </p>
               </div>
-              {!n.read && (
-                <button
-                  onClick={() => onMarkRead(n.id)}
-                  className="shrink-0 rounded-lg border border-base-700 px-2 py-1 text-xs text-base-300 hover:border-base-600 hover:text-base-100"
-                >
-                  Mark read
-                </button>
-              )}
+              <div className="flex shrink-0 items-center gap-1.5">
+                {!n.read && (
+                  <button
+                    onClick={() => onMarkRead(n.id)}
+                    className="rounded-lg border border-base-700 px-2 py-1 text-xs text-base-300 hover:border-base-600 hover:text-base-100"
+                  >
+                    Mark read
+                  </button>
+                )}
+                <IconButton title="Delete this notification" variant="danger" onClick={() => onDeleteNotification(n.id)}>
+                  <TrashIcon className="h-3.5 w-3.5" />
+                </IconButton>
+              </div>
             </li>
           ))}
         </ul>
@@ -88,8 +109,20 @@ export function SessionFeedTab({
                 <span className="text-base-500">at</span>
                 <span className="text-base-300">{s.cinemaName}</span>
               </div>
-              <div className="text-xs text-base-400">
-                {formatDateTime(s.startsAt)} &middot; {s.format}
+              <div className="flex items-center gap-3">
+                <div className="text-xs text-base-400">
+                  {formatDateTime(s.startsAt)} &middot; {s.format}
+                </div>
+                {s.ticketUrl && (
+                  <a
+                    href={s.ticketUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 rounded-lg border border-accent-dim/50 bg-accent-soft px-2 py-1 text-xs font-medium text-accent hover:border-accent-dim"
+                  >
+                    <TicketIcon className="h-3.5 w-3.5" /> Get tickets
+                  </a>
+                )}
               </div>
             </li>
           ))}

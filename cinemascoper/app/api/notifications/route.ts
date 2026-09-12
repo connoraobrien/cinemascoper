@@ -16,3 +16,23 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json(await buildState());
 }
+
+/** Delete one notification (`?id=`) or every notification (`?all=true`). */
+export async function DELETE(req: NextRequest) {
+  const id = req.nextUrl.searchParams.get("id");
+  const all = req.nextUrl.searchParams.get("all") === "true";
+
+  if (!id && !all) {
+    return NextResponse.json({ error: "id or all=true query param required" }, { status: 400 });
+  }
+
+  await withDB((db) => {
+    if (all) {
+      db.notifications = [];
+    } else if (id) {
+      db.notifications = db.notifications.filter((n) => n.id !== id);
+    }
+  });
+
+  return NextResponse.json(await buildState());
+}

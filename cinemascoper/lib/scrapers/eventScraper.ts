@@ -2,6 +2,7 @@ import { Session, SessionFormat } from "../types";
 import { makeId } from "../ids";
 import { CinemaScraper } from "./types";
 import { titlesMatch } from "./titleMatch";
+import { sydneyIsoWallClockToUtc } from "./sydneyTime";
 
 /**
  * Event Cinemas (this also covers IMAX Sydney — it's its own Event
@@ -18,8 +19,13 @@ import { titlesMatch } from "./titleMatch";
  *    serverless function's time budget on a single poll tick.
  *  - Shape: `Data.Movies[].Name` for the title, and each movie's
  *    `CinemaModels[]` (one per requested cinemaId) carries `.Sessions[]`:
- *    `{ MovieId, CinemaId, StartTime, ScreenType, ScreenTypeName }`.
- *    `StartTime` is local wall-clock, no offset.
+ *    `{ Id, MovieId, CinemaId, StartTime, ScreenType, ScreenTypeName,
+ *    BookingUrl }`. `StartTime` (e.g. "2026-09-12T16:30", confirmed via a
+ *    live fetch) is local wall-clock with no offset and no seconds — don't
+ *    `new Date()` it directly (see `sydneyIsoWallClockToUtc`'s doc comment
+ *    for why that silently gives the wrong instant on a server). `BookingUrl`
+ *    is a ready-made ticket link straight from the API — used as-is rather
+ *    than hand-building one.
  *
  * `<id>` (e.g. "15" for George Street, "96" for IMAX Sydney) is
  * `Cinema.providerId` — resolved via the cinema search in the "Add a
@@ -37,9 +43,11 @@ function mapFormat(screenTypeName: string | undefined): SessionFormat {
 }
 
 interface EventSession {
-  StartTime: string;
+  Id: number;
+  StartTime: string; // local wall-clock, no offset — see doc comment above
   ScreenType?: string;
   ScreenTypeName?: string;
+  BookingUrl?: string;
 }
 
 interface EventCinemaModel {
@@ -104,8 +112,8 @@ export const eventScraper: CinemaScraper = {
         if (!cinemaModel) continue;
 
         for (const raw of cinemaModel.Sessions) {
-          const startsAt = new Date(raw.StartTime);
-          if (Number.isNaN(startsAt.getTime()) || startsAt.getTime() < now.getTime()) continue;
+          const startsAt = sydneyIsoWallClockToUtc(raw.StartTime);
+          if (!startsAt || startsAt.getTime() < now.getTime()) continue;
           const startsAtIso = startsAt.toISOString();
 
           const alreadyKnown = [...existingSessions, ...discovered].some(
@@ -120,6 +128,7 @@ export const eventScraper: CinemaScraper = {
             startsAt: startsAtIso,
             format: mapFormat(raw.ScreenTypeName ?? raw.ScreenType),
             publishedAt: now.toISOString(),
+            ticketUrl: raw.BookingUrl || `https://www.eventcinemas.com.au/orders/tickets#sessionId=${raw.Id}`,
           });
         }
       }

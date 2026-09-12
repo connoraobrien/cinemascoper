@@ -134,6 +134,16 @@ export default function Home() {
     setState(next);
   }, []);
 
+  const deleteNotification = useCallback(async (id: string) => {
+    const next = await jsonFetch<AppState>(`/api/notifications?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    setState(next);
+  }, []);
+
+  const clearAllNotifications = useCallback(async () => {
+    const next = await jsonFetch<AppState>("/api/notifications?all=true", { method: "DELETE" });
+    setState(next);
+  }, []);
+
   if (!state) {
     return (
       <div className="flex min-h-screen items-center justify-center text-base-400">
@@ -201,6 +211,8 @@ export default function Home() {
             myCinemaIds={myCinemaIds}
             onMarkRead={markRead}
             onMarkAllRead={markAllRead}
+            onDeleteNotification={deleteNotification}
+            onClearAllNotifications={clearAllNotifications}
           />
         )}
 
