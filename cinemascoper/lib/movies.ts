@@ -8,13 +8,23 @@ import { SEED_MOVIES } from "./seedMovies";
  *
  * What this fetches: TMDB's `discover/movie` filtered to `region: "AU"`
  * and theatrical release types (2 = limited, 3 = wide), sorted by AU
- * primary release date, spanning from `LOOKBACK_DAYS` ago (so a movie
- * that *just* opened is still visible) to `LOOKAHEAD_DAYS` out. For each
- * result, one follow-up call to `/movie/{id}?append_to_response=release_dates`
- * gets runtime, full genre names, and the AU-specific release_dates entry
- * — used to tell "Limited Release" apart from "Standard Theatrical" (TMDB
+ * release date, spanning from `LOOKBACK_DAYS` ago (so a movie that *just*
+ * opened is still visible) to `LOOKAHEAD_DAYS` out. For each result, one
+ * follow-up call to `/movie/{id}?append_to_response=release_dates` gets
+ * runtime, full genre names, and the AU-specific release_dates entry —
+ * used to tell "Limited Release" apart from "Standard Theatrical" (TMDB
  * doesn't have a "Film Festival" release type, so real data never produces
  * that ReleaseType; it stays available for the demo catalogue only).
+ *
+ * Filtering deliberately uses `release_date.gte/lte` (which, combined with
+ * `region`, TMDB scopes to *that region's own* release dates) rather than
+ * `primary_release_date.gte/lte` (the movie's single global release date,
+ * unaffected by `region`) — the latter was tried first and, sorted
+ * ascending across TMDB's whole catalogue, mostly surfaced obscure titles
+ * clustered right at the window's start date rather than actual upcoming
+ * Australian releases. `region` narrows which release counts; it doesn't
+ * narrow *which date field* gets filtered/sorted unless you also pick the
+ * region-aware filter.
  *
  * Capped at MAX_MOVIES and cached in memory for CACHE_TTL_MS: this is a
  * single-user, low-traffic app, and every extra movie is one extra TMDB
@@ -32,9 +42,10 @@ const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500";
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const MAX_MOVIES = 30; // bounds discover pages fetched and detail lookups made
+const MAX_MOVIES = 40; // bounds discover pages fetched and detail lookups made
+const MAX_PAGES = 3; // TMDB returns 20 results/page
 const LOOKBACK_DAYS = 14;
-const LOOKAHEAD_DAYS = 120;
+const LOOKAHEAD_DAYS = 180; // ~6 months of upcoming releases
 
 let cache: { at: number; movies: Movie[] } | null = null;
 
@@ -116,13 +127,15 @@ async function fetchFromTmdb(apiKey: string): Promise<Movie[]> {
   const lte = isoDate(new Date(now.getTime() + LOOKAHEAD_DAYS * 86400000));
 
   const discovered: TmdbDiscoverResult[] = [];
-  for (let page = 1; page <= 2 && discovered.length < MAX_MOVIES; page++) {
+  for (let page = 1; page <= MAX_PAGES && discovered.length < MAX_MOVIES; page++) {
     const data = await tmdbGet<{ results: TmdbDiscoverResult[]; total_pages: number }>("/discover/movie", apiKey, {
       region: "AU",
       with_release_type: "2|3",
-      "primary_release_date.gte": gte,
-      "primary_release_date.lte": lte,
-      sort_by: "primary_release_date.asc",
+      // Region-scoped filter (see doc comment above) — not primary_release_date,
+      // which ignores `region` and pulls from TMDB's whole global catalogue.
+      "release_date.gte": gte,
+      "release_date.lte": lte,
+      sort_by: "release_date.asc",
       include_adult: "false",
       page: String(page),
     });

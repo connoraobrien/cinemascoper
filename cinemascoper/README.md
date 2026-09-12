@@ -196,8 +196,11 @@ catalogue, so local dev works with nothing configured.
 
 What it fetches: TMDB's `discover/movie`, filtered to `region: "AU"` and
 theatrical release types, spanning from two weeks ago (so a just-opened
-film still shows) to about four months out — then one follow-up call per
-movie for runtime, genre names, and its AU-specific release date. Results
+film still shows) to about six months out — using TMDB's region-scoped
+`release_date.gte/lte` filters rather than its global `primary_release_date`
+ones, so this is actually Australia's own release slate rather than
+whatever's earliest in TMDB's entire catalogue — then one follow-up call
+per movie for runtime, genre names, and its AU-specific release date. Results
 are cached in memory for a few hours; a transient TMDB failure (or an
 invalid key) falls back to the demo catalogue rather than showing an empty
 Release Radar. Nothing downstream needed to change — every consumer only
