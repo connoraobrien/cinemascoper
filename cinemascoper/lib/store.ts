@@ -31,6 +31,7 @@ function emptyDB(): DB {
     manualMovies: [],
     hiddenMovieIds: [],
     trackedReleaseDates: {},
+    purchasedSessionIds: [],
   };
 }
 

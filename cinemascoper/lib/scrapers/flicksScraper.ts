@@ -1,8 +1,9 @@
-import { Session } from "../types";
+import { Movie, Session } from "../types";
 import { makeId } from "../ids";
 import { CinemaScraper } from "./types";
 import { titlesMatch } from "./titleMatch";
 import { sydneyTodayParts, sydneyWallClockToUtc } from "./sydneyTime";
+import { resolveShadowMovie } from "./shadowMovies";
 
 /**
  * The universal fallback: flicks.com.au (a well-known third-party AU
@@ -64,10 +65,12 @@ function toDateParam(year: number, month: number, day: number): string {
 export const flicksScraper: CinemaScraper = {
   name: "flicks.com.au (universal fallback)",
 
-  async discoverNewSessions({ cinema, candidateMovies, existingSessions, now }) {
-    if (!cinema.providerId) return [];
+  async discoverNewSessions({ cinema, allKnownMovies, existingSessions, now }) {
+    if (!cinema.providerId) return { sessions: [], shadowMovies: [] };
     const discovered: Session[] = [];
     const today = sydneyTodayParts(now);
+    const knownForMatch = [...allKnownMovies];
+    const shadowMovies: Movie[] = [];
 
     for (let dayOffset = 0; dayOffset < DAYS_AHEAD; dayOffset++) {
       const targetDay = new Date(Date.UTC(today.year, today.month, today.day + dayOffset));
@@ -86,8 +89,17 @@ export const flicksScraper: CinemaScraper = {
       }
 
       for (const block of extractMovieBlocks(html)) {
-        const movie = candidateMovies.find((m) => titlesMatch(m.title, block.title));
-        if (!movie) continue;
+        // Match against everything known, not just this tick's near-term
+        // candidates — see the doc comment on `discoverNewSessions` in
+        // lib/scrapers/types.ts.
+        let movie = knownForMatch.find((m) => titlesMatch(m.title, block.title));
+        if (!movie) {
+          movie = resolveShadowMovie(block.title, knownForMatch);
+          if (!knownForMatch.some((m) => m.id === movie!.id)) {
+            knownForMatch.push(movie);
+            shadowMovies.push(movie);
+          }
+        }
 
         for (const session of block.sessions) {
           const parsed = parseTimeOfDay(session.time);
@@ -104,7 +116,7 @@ export const flicksScraper: CinemaScraper = {
           const startsAtIso = startsAt.toISOString();
 
           const alreadyKnown = [...existingSessions, ...discovered].some(
-            (s) => s.movieId === movie.id && s.cinemaId === cinema.id && s.startsAt === startsAtIso
+            (s) => s.movieId === movie!.id && s.cinemaId === cinema.id && s.startsAt === startsAtIso
           );
           if (alreadyKnown) continue;
 
@@ -121,6 +133,6 @@ export const flicksScraper: CinemaScraper = {
       }
     }
 
-    return discovered;
+    return { sessions: discovered, shadowMovies };
   },
 };

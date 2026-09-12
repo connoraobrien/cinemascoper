@@ -4,7 +4,7 @@ import { JoinedSession } from "@/lib/clientTypes";
 import { formatDayLabel, formatTimeOfDay, monthYearLabel } from "@/lib/dateUtils";
 import { sydneyDateKey } from "@/lib/scrapers/sydneyTime";
 import { EmptyState } from "./ui";
-import { TicketIcon } from "./Icons";
+import { CheckIcon, EyeOffIcon, TicketIcon } from "./Icons";
 
 /** Groups sessions by their Sydney calendar day (ascending), each day's sessions sorted by time —
  * "show all of the sessions on each day, and note what cinema they're at and in what format". */
@@ -24,18 +24,25 @@ export function groupSessionsByDate(sessions: JoinedSession[]): { dateKey: strin
 /**
  * The one shared "session times, organised by date, noting cinema and
  * format" view — used in the Release Radar preview panel, the Watchlist
- * movie detail, and the Session Times tab, so all three read consistently.
- * `showMovieTitle` turns on a per-row title (for a multi-movie list, e.g.
- * the Session Times tab); otherwise a row just shows cinema/time/format.
+ * movie detail, the Session Times tab, and My Tickets, so all four read
+ * consistently. `showMovieTitle` turns on a per-row title (for a
+ * multi-movie list, e.g. the Session Times tab); otherwise a row just shows
+ * cinema/time/format. `onTogglePurchased`/`onHideMovie` are both optional —
+ * pass them to turn on the "got tickets" toggle and per-row "seen it, hide"
+ * action; omit either to leave that row control out entirely.
  */
 export function SessionList({
   sessions,
   showMovieTitle = false,
   emptyHint = "No session times published yet.",
+  onTogglePurchased,
+  onHideMovie,
 }: {
   sessions: JoinedSession[];
   showMovieTitle?: boolean;
   emptyHint?: string;
+  onTogglePurchased?: (sessionId: string) => void;
+  onHideMovie?: (movieId: string) => void;
 }) {
   const grouped = groupSessionsByDate(sessions);
 
@@ -64,25 +71,67 @@ export function SessionList({
                   key={s.id}
                   className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-base-800 bg-base-850 px-3 py-2 text-sm"
                 >
-                  <div className="flex items-center gap-2 text-base-200">
+                  <div className="flex flex-wrap items-center gap-2 text-base-200">
                     <span className="font-medium text-base-100">{formatTimeOfDay(s.startsAt)}</span>
                     <span className="text-base-500">&middot;</span>
-                    {showMovieTitle && <span className="text-base-200">{s.movieTitle}</span>}
+                    {showMovieTitle && (
+                      <span className="inline-flex items-center gap-1 text-base-200">
+                        {s.movieTitle}
+                        {onHideMovie && (
+                          <button
+                            onClick={() => onHideMovie(s.movieId)}
+                            title="Hide this movie — you've seen it, or you're not interested"
+                            className="text-base-600 hover:text-base-300"
+                          >
+                            <EyeOffIcon className="h-3 w-3" />
+                          </button>
+                        )}
+                      </span>
+                    )}
                     <span className="text-base-300">{s.cinemaName}</span>
                     <span className="rounded-full border border-base-700 bg-base-900 px-1.5 py-0.5 text-[11px] text-base-400">
                       {s.format}
                     </span>
+                    {s.isReleaseDay && (
+                      <span
+                        title="This is the film's official release day"
+                        className="rounded-full border border-accent-dim/40 bg-accent-soft px-1.5 py-0.5 text-[11px] font-medium text-accent"
+                      >
+                        Release day
+                      </span>
+                    )}
+                    {s.isReRelease && (
+                      <span className="rounded-full border border-amber-700/40 bg-amber-950/40 px-1.5 py-0.5 text-[11px] text-amber-300">
+                        Re-release
+                      </span>
+                    )}
                   </div>
-                  {s.ticketUrl && (
-                    <a
-                      href={s.ticketUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 rounded-lg border border-accent-dim/50 bg-accent-soft px-2 py-1 text-xs font-medium text-accent hover:border-accent-dim"
-                    >
-                      <TicketIcon className="h-3.5 w-3.5" /> Tickets
-                    </a>
-                  )}
+                  <div className="flex items-center gap-1.5">
+                    {onTogglePurchased && (
+                      <button
+                        onClick={() => onTogglePurchased(s.id)}
+                        title={s.ticketPurchased ? "You've got tickets — tap to undo" : "Mark that you've got tickets"}
+                        className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium transition-colors ${
+                          s.ticketPurchased
+                            ? "border-emerald-700/50 bg-emerald-950/40 text-emerald-300"
+                            : "border-base-700 text-base-400 hover:border-base-600 hover:text-base-100"
+                        }`}
+                      >
+                        {s.ticketPurchased ? <CheckIcon className="h-3.5 w-3.5" /> : <TicketIcon className="h-3.5 w-3.5" />}
+                        {s.ticketPurchased ? "Got tickets" : "Got tickets?"}
+                      </button>
+                    )}
+                    {s.ticketUrl && (
+                      <a
+                        href={s.ticketUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 rounded-lg border border-accent-dim/50 bg-accent-soft px-2 py-1 text-xs font-medium text-accent hover:border-accent-dim"
+                      >
+                        <TicketIcon className="h-3.5 w-3.5" /> Tickets
+                      </a>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>

@@ -12,6 +12,26 @@ import { MAINSTREAM_POPULARITY_THRESHOLD } from "@/lib/movies";
 const FILTERS: ("All" | ReleaseType)[] = ["All", "Standard Theatrical", "Limited Release", "Film Festival"];
 type ViewMode = "grid" | "byDate" | "calendar";
 
+// "Show only new releases" — hides a watchlisted (or manually-added) movie
+// that released more than this long ago, e.g. an old catalogue title added
+// via the "search all of TMDB" flow so a cinema could be polled for a
+// re-release of it. Kept out of Release Radar's day-to-day view by default
+// intent (the toggle below is off unless Connor turns it on) so old titles
+// don't clutter what's meant to be upcoming releases.
+const OLD_RELEASE_DAYS = 365;
+
+/** Places movies with no release date (TBA) after everything else, rather than sorting them first
+ * (an empty string sorts before any real date string) — "put films that don't have a release date
+ * at the bottom of the page rather than at the top." */
+function sortByReleaseDate(movies: Movie[]): Movie[] {
+  return [...movies].sort((a, b) => {
+    if (!a.releaseDate && !b.releaseDate) return a.title.localeCompare(b.title);
+    if (!a.releaseDate) return 1;
+    if (!b.releaseDate) return -1;
+    return a.releaseDate.localeCompare(b.releaseDate);
+  });
+}
+
 function groupByDate(movies: Movie[]): { dateKey: string; movies: Movie[] }[] {
   const groups = new Map<string, Movie[]>();
   for (const movie of movies) {
@@ -33,6 +53,7 @@ export function ReleasesTab({
   myCinemaIds,
   onToggleTrack,
   onHide,
+  onTogglePurchased,
 }: {
   movies: Movie[];
   trackedIds: Set<string>;
@@ -40,22 +61,27 @@ export function ReleasesTab({
   myCinemaIds: Set<string>;
   onToggleTrack: (movieId: string) => void;
   onHide: (movieId: string) => void;
+  onTogglePurchased: (sessionId: string) => void;
 }) {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("All");
   const [view, setView] = useState<ViewMode>("grid");
   const [mainstreamOnly, setMainstreamOnly] = useState(false);
+  const [newOnly, setNewOnly] = useState(false);
   const [search, setSearch] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     let list = filter === "All" ? movies : movies.filter((m) => m.releaseType === filter);
     if (mainstreamOnly) list = list.filter((m) => (m.popularity ?? 0) >= MAINSTREAM_POPULARITY_THRESHOLD);
+    if (newOnly) {
+      list = list.filter((m) => !m.releaseDate || daysUntil(m.releaseDate) > -OLD_RELEASE_DAYS);
+    }
     const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter((m) => m.title.toLowerCase().includes(q) || (m.director ?? "").toLowerCase().includes(q));
     }
-    return [...list].sort((a, b) => a.releaseDate.localeCompare(b.releaseDate));
-  }, [movies, filter, mainstreamOnly, search]);
+    return sortByReleaseDate(list);
+  }, [movies, filter, mainstreamOnly, newOnly, search]);
 
   const grouped = useMemo(() => groupByDate(filtered), [filtered]);
   const previewMovie = previewId ? movies.find((m) => m.id === previewId) ?? null : null;
@@ -83,6 +109,9 @@ export function ReleasesTab({
           ))}
           <Chip active={mainstreamOnly} onClick={() => setMainstreamOnly((v) => !v)}>
             Mainstream only
+          </Chip>
+          <Chip active={newOnly} onClick={() => setNewOnly((v) => !v)}>
+            New releases only
           </Chip>
         </div>
         <div className="relative max-w-sm">
@@ -123,6 +152,7 @@ export function ReleasesTab({
           tracked={trackedIds.has(previewMovie.id)}
           sessions={sessions.filter((s) => s.movieId === previewMovie.id && myCinemaIds.has(s.cinemaId))}
           onToggleTrack={() => onToggleTrack(previewMovie.id)}
+          onTogglePurchased={onTogglePurchased}
           onClose={() => setPreviewId(null)}
         />
       )}
@@ -324,12 +354,14 @@ function MoviePreviewPanel({
   tracked,
   sessions,
   onToggleTrack,
+  onTogglePurchased,
   onClose,
 }: {
   movie: Movie;
   tracked: boolean;
   sessions: JoinedSession[];
   onToggleTrack: () => void;
+  onTogglePurchased: (sessionId: string) => void;
   onClose: () => void;
 }) {
   const days = daysUntil(movie.releaseDate || new Date().toISOString());
@@ -382,7 +414,11 @@ function MoviePreviewPanel({
           <p className="mb-4 text-sm text-base-400">{movie.synopsis}</p>
 
           <p className="mb-2 text-xs font-medium uppercase tracking-wide text-base-500">Session times at your cinemas</p>
-          <SessionList sessions={sessions} emptyHint="No session times published yet at your cinemas." />
+          <SessionList
+            sessions={sessions}
+            emptyHint="No session times published yet at your cinemas."
+            onTogglePurchased={onTogglePurchased}
+          />
         </div>
 
         <div className="border-t border-base-800 p-4">

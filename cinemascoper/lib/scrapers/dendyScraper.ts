@@ -135,8 +135,11 @@ export const dendyScraper: CinemaScraper = {
   async discoverNewSessions({ cinema, candidateMovies, existingSessions, now }) {
     const subdomain = cinema.providerId;
     const siteId = SITE_IDS[subdomain];
-    if (!subdomain || !siteId) return [];
+    if (!subdomain || !siteId) return { sessions: [], shadowMovies: [] };
 
+    // Like Ritz Randwick, this asks about one candidate movie at a time
+    // (no "what's on" listing endpoint reverse-engineered for Dendy — see
+    // the doc comment above), so it never creates shadow movies itself.
     const discovered: Session[] = [];
 
     for (const movie of candidateMovies) {
@@ -189,6 +192,6 @@ export const dendyScraper: CinemaScraper = {
       }
     }
 
-    return discovered;
+    return { sessions: discovered, shadowMovies: [] };
   },
 };

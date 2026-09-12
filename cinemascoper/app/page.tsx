@@ -8,6 +8,7 @@ import { SettingsTab } from "@/components/SettingsTab";
 import { AlertsTab } from "@/components/AlertsTab";
 import { SessionTimesTab } from "@/components/SessionTimesTab";
 import { WatchlistTab } from "@/components/WatchlistTab";
+import { TicketsTab } from "@/components/TicketsTab";
 
 // How often the dashboard re-checks in the background while the tab is
 // open (a real /api/poll call, not a simulation). In production,
@@ -109,6 +110,22 @@ export default function Home() {
     setState(next);
   }, []);
 
+  // Toggling "Got tickets?" on any session row across the app — the same
+  // handler backs Session Times, Watchlist, the Release Radar preview, and
+  // My Tickets, since they all render sessions through the shared
+  // SessionList component.
+  const togglePurchased = useCallback(
+    async (sessionId: string) => {
+      if (!state) return;
+      const isPurchased = state.myTickets.some((s) => s.id === sessionId);
+      const next = isPurchased
+        ? await jsonFetch<AppState>(`/api/tickets?sessionId=${encodeURIComponent(sessionId)}`, { method: "DELETE" })
+        : await jsonFetch<AppState>("/api/tickets", { method: "POST", body: JSON.stringify({ sessionId }) });
+      setState(next);
+    },
+    [state]
+  );
+
   const addCinema = useCallback(
     async (input: { name: string; city: string; suburb: string; provider: string; providerId: string }) => {
       const next = await jsonFetch<AppState>("/api/cinemas", { method: "POST", body: JSON.stringify(input) });
@@ -205,7 +222,15 @@ export default function Home() {
           />
         )}
 
-        {tab === "sessions" && <SessionTimesTab sessions={state.sessions} myCinemas={state.cinemas} />}
+        {tab === "sessions" && (
+          <SessionTimesTab
+            sessions={state.sessions}
+            myCinemas={state.cinemas}
+            watchlistIds={trackedIds}
+            onTogglePurchased={togglePurchased}
+            onHideMovie={hideMovie}
+          />
+        )}
 
         {tab === "releases" && (
           <ReleasesTab
@@ -215,6 +240,7 @@ export default function Home() {
             myCinemaIds={myCinemaIds}
             onToggleTrack={toggleTrack}
             onHide={hideMovie}
+            onTogglePurchased={togglePurchased}
           />
         )}
 
@@ -227,8 +253,12 @@ export default function Home() {
             onSelect={setSelectedWatchlistId}
             onUntrack={toggleTrack}
             onAddMovie={addMovieByTmdbId}
+            onHideMovie={hideMovie}
+            onTogglePurchased={togglePurchased}
           />
         )}
+
+        {tab === "tickets" && <TicketsTab tickets={state.myTickets} onTogglePurchased={togglePurchased} />}
 
         {tab === "settings" && (
           <SettingsTab

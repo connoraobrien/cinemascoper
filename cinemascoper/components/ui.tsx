@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
 import { ReleaseType } from "@/lib/clientTypes";
 
-// "Theatrical" rather than "Standard Theatrical" — fits on one line on a filter chip. The
-// underlying ReleaseType value is left as-is (it's the data model, and "Standard Theatrical" vs
-// "Limited Release" is a meaningful distinction) — this only shortens what's displayed.
+// "Theatrical" / "Limited" rather than "Standard Theatrical" / "Limited Release" — both fit on one
+// line on a filter chip. The underlying ReleaseType value is left as-is (it's the data model, and
+// "Standard Theatrical" vs "Limited Release" is a meaningful distinction) — this only shortens
+// what's displayed.
 const RELEASE_TYPE_LABEL: Record<ReleaseType, string> = {
   "Standard Theatrical": "Theatrical",
-  "Limited Release": "Limited Release",
+  "Limited Release": "Limited",
   "Film Festival": "Film Festival",
 };
 

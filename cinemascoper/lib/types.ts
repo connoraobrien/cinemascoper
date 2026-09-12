@@ -32,6 +32,18 @@ export interface Movie {
   director?: string;
   trailerUrl?: string; // a YouTube watch link (from TMDB's videos), when one is available
   popularity?: number; // TMDB's own popularity score — backs the "Mainstream releases" filter
+  /**
+   * Where this Movie record came from: undefined/"tmdb" for the normal
+   * discover-window catalogue, "manual" for one added via the "search all
+   * of TMDB" flow (lib/allMovies.ts), "scraped" for a placeholder a cinema
+   * scraper auto-created for a title it found showing but didn't recognise
+   * from TMDB or the watchlist (see lib/scrapers/shadowMovies.ts) — e.g. an
+   * old catalogue title getting a 70mm re-release. "scraped" movies are
+   * deliberately excluded from Release Radar / the trackable movie list
+   * (no real metadata to show) but their sessions still surface in the
+   * Session Times tab, which is the whole point of creating them.
+   */
+  source?: "tmdb" | "manual" | "scraped";
 }
 
 export interface Cinema {
@@ -139,4 +151,11 @@ export interface DB {
   // Only tracked for watchlisted movies — everything else's date churns
   // constantly on TMDB and would be pure noise.
   trackedReleaseDates: Record<string, string>;
+  // Session ids Connor has marked "I've got tickets" for — backs the
+  // "My Tickets" tab (see lib/apiState.ts's `myTickets`), a personal
+  // itinerary of screenings he's actually committed to rather than just
+  // tracking. A session id dropping out of `sessions` entirely (cinema
+  // removed, or it just aged out) naturally makes the ticket a no-op —
+  // nothing needs to clean this up proactively.
+  purchasedSessionIds: string[];
 }

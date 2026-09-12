@@ -19,10 +19,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "tmdbId (number) is required" }, { status: 400 });
   }
 
-  const movie = await fetchTmdbMovieById(tmdbId);
-  if (!movie) {
+  const fetched = await fetchTmdbMovieById(tmdbId);
+  if (!fetched) {
     return NextResponse.json({ error: "Couldn't fetch that movie from TMDB" }, { status: 502 });
   }
+  const movie = { ...fetched, source: "manual" as const };
 
   await withDB((db) => {
     db.manualMovies = [...db.manualMovies.filter((m) => m.id !== movie.id), movie];

@@ -1,7 +1,8 @@
-import { Session, SessionFormat } from "../types";
+import { Movie, Session, SessionFormat } from "../types";
 import { makeId } from "../ids";
 import { CinemaScraper } from "./types";
 import { titlesMatch } from "./titleMatch";
+import { resolveShadowMovie } from "./shadowMovies";
 
 /**
  * Hoyts. Reverse-engineered from what hoyts.com.au's own cinema pages call
@@ -61,8 +62,8 @@ interface HoytsSession {
 export const hoytsScraper: CinemaScraper = {
   name: "Hoyts (apim-aea.hoyts.com.au)",
 
-  async discoverNewSessions({ cinema, candidateMovies, existingSessions, now }) {
-    if (!cinema.providerId) return [];
+  async discoverNewSessions({ cinema, allKnownMovies, existingSessions, now }) {
+    if (!cinema.providerId) return { sessions: [], shadowMovies: [] };
 
     let movies: HoytsMovie[];
     let sessions: HoytsSession[];
@@ -71,30 +72,43 @@ export const hoytsScraper: CinemaScraper = {
         fetch(`${API_BASE}/movies`),
         fetch(`${API_BASE}/sessions/${encodeURIComponent(cinema.providerId)}`),
       ]);
-      if (!moviesRes.ok || !sessionsRes.ok) return [];
+      if (!moviesRes.ok || !sessionsRes.ok) return { sessions: [], shadowMovies: [] };
       movies = await moviesRes.json();
       sessions = await sessionsRes.json();
     } catch (err) {
       console.error(`[hoytsScraper] fetch failed for ${cinema.name}:`, err);
-      return [];
+      return { sessions: [], shadowMovies: [] };
     }
 
     const nameByVistaId = new Map(movies.map((m) => [m.vistaId, m.name]));
     const discovered: Session[] = [];
+    const knownForMatch = [...allKnownMovies];
+    const shadowMovies: Movie[] = [];
 
     for (const raw of sessions) {
       const hoytsTitle = nameByVistaId.get(raw.movieId);
       if (!hoytsTitle) continue;
 
-      const movie = candidateMovies.find((m) => titlesMatch(m.title, hoytsTitle));
-      if (!movie) continue;
+      // Match against everything CinemaScoper knows about, not just this
+      // tick's near-term candidates — an older, already-released title
+      // Hoyts is re-screening is still "known" if it's in TMDB or was
+      // manually added; only a genuinely unrecognised title falls through
+      // to a shadow movie (see the doc comment on `resolveShadowMovie`).
+      let movie = knownForMatch.find((m) => titlesMatch(m.title, hoytsTitle));
+      if (!movie) {
+        movie = resolveShadowMovie(hoytsTitle, knownForMatch);
+        if (!knownForMatch.some((m) => m.id === movie!.id)) {
+          knownForMatch.push(movie);
+          shadowMovies.push(movie);
+        }
+      }
 
       const startsAt = new Date(raw.utcDate);
       if (Number.isNaN(startsAt.getTime()) || startsAt.getTime() < now.getTime()) continue;
       const startsAtIso = startsAt.toISOString();
 
       const alreadyKnown = [...existingSessions, ...discovered].some(
-        (s) => s.movieId === movie.id && s.cinemaId === cinema.id && s.startsAt === startsAtIso
+        (s) => s.movieId === movie!.id && s.cinemaId === cinema.id && s.startsAt === startsAtIso
       );
       if (alreadyKnown) continue;
 
@@ -109,6 +123,6 @@ export const hoytsScraper: CinemaScraper = {
       });
     }
 
-    return discovered;
+    return { sessions: discovered, shadowMovies };
   },
 };

@@ -141,6 +141,13 @@ export interface MovieSearchResult {
   title: string;
   releaseDate: string; // may be "" for an unannounced/TBA title
   posterUrl?: string;
+  matchedDirector?: string; // set only when this result came from the by-director search below
+}
+
+interface TmdbPerson {
+  id: number;
+  name: string;
+  known_for_department?: string;
 }
 
 async function tmdbGet<T>(path: string, apiKey: string, params: Record<string, string>): Promise<T | null> {
@@ -247,32 +254,85 @@ async function fetchFromTmdb(apiKey: string): Promise<Movie[]> {
 }
 
 /**
+ * Falls back to searching by director when the title search above doesn't
+ * turn up much — "I'm looking for a film by a director but I don't know
+ * what it's called." Two calls: find the person (`/search/person`, picking
+ * whoever's actually known for directing over an actor/crew member who
+ * happens to share a name), then their filmography as a director
+ * (`/discover/movie?with_crew=<personId>`). Not live-verified against a
+ * real TMDB response from this sandbox (see the doc comment at the top of
+ * this file) — `with_crew` is TMDB's documented (if less-used than
+ * `with_cast`) discover parameter for "this person appears in the crew",
+ * which includes directing credits; worth confirming after deploy that it
+ * doesn't also pull in, say, a producer or composer of the same name's work.
+ */
+async function searchTmdbByDirector(query: string, apiKey: string): Promise<MovieSearchResult[]> {
+  const people = await tmdbGet<{ results: TmdbPerson[] }>("/search/person", apiKey, {
+    query,
+    include_adult: "false",
+  });
+  const person =
+    people?.results?.find((p) => p.known_for_department === "Directing") ?? people?.results?.[0] ?? null;
+  if (!person) return [];
+
+  const discover = await tmdbGet<{ results: TmdbDiscoverResult[] }>("/discover/movie", apiKey, {
+    with_crew: String(person.id),
+    sort_by: "popularity.desc",
+    include_adult: "false",
+  });
+  if (!discover) return [];
+
+  return discover.results.slice(0, 8).map((r) => ({
+    tmdbId: r.id,
+    title: r.title,
+    releaseDate: r.release_date ?? "",
+    posterUrl: r.poster_path ? `${TMDB_IMAGE_BASE}${r.poster_path}` : undefined,
+    matchedDirector: person.name,
+  }));
+}
+
+/**
  * Backs the "search all of TMDB" box (Watchlist tab) — for a film that
  * isn't in the current discover window: not yet locked into a wide AU
  * release, an old title getting a re-release (e.g. the Ritz's 70mm
  * screenings), or anything else `getMovies()` wouldn't have surfaced.
  * Lightweight on purpose (no per-result detail call) — a detail lookup
  * only happens for the one result Connor actually picks, via
- * `fetchTmdbMovieById`.
+ * `fetchTmdbMovieById`. Searches by title and by director in parallel and
+ * merges the two (title matches first, then any director hits not already
+ * present) — so a search that's actually a director's name still turns up
+ * their films without a separate mode to switch into.
  */
 export async function searchTmdbMovies(query: string): Promise<MovieSearchResult[]> {
   const apiKey = process.env.TMDB_API_KEY;
   const q = query.trim();
   if (!apiKey || !q) return [];
 
-  const data = await tmdbGet<{ results: TmdbDiscoverResult[] }>("/search/movie", apiKey, {
-    query: q,
-    include_adult: "false",
-    region: "AU",
-  });
-  if (!data) return [];
+  const [titleData, directorHits] = await Promise.all([
+    tmdbGet<{ results: TmdbDiscoverResult[] }>("/search/movie", apiKey, {
+      query: q,
+      include_adult: "false",
+      region: "AU",
+    }),
+    searchTmdbByDirector(q, apiKey),
+  ]);
 
-  return data.results.slice(0, 12).map((r) => ({
+  const titleHits: MovieSearchResult[] = (titleData?.results ?? []).slice(0, 12).map((r) => ({
     tmdbId: r.id,
     title: r.title,
     releaseDate: r.release_date ?? "",
     posterUrl: r.poster_path ? `${TMDB_IMAGE_BASE}${r.poster_path}` : undefined,
   }));
+
+  const seen = new Set(titleHits.map((r) => r.tmdbId));
+  const merged = [...titleHits];
+  for (const hit of directorHits) {
+    if (seen.has(hit.tmdbId)) continue;
+    seen.add(hit.tmdbId);
+    merged.push(hit);
+  }
+
+  return merged.slice(0, 16);
 }
 
 /** Fetches full detail for one TMDB movie id and maps it to our `Movie` shape — used when Connor

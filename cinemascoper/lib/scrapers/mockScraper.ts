@@ -66,6 +66,6 @@ export const mockScraper: CinemaScraper = {
       }
     }
 
-    return discovered;
+    return { sessions: discovered, shadowMovies: [] };
   },
 };

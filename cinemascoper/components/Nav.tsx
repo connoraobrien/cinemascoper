@@ -1,19 +1,22 @@
 "use client";
 
-import { BellIcon, GearIcon, RefreshIcon, ScopeReelLogo } from "./Icons";
+import { ReactNode } from "react";
+import { BellIcon, BookmarkIcon, ClockIcon, FilmIcon, GearIcon, RefreshIcon, ScopeReelLogo, TicketIcon } from "./Icons";
 import { formatRelative } from "@/lib/dateUtils";
 
-export type TabKey = "alerts" | "sessions" | "releases" | "watchlist" | "settings";
+export type TabKey = "alerts" | "sessions" | "releases" | "watchlist" | "tickets" | "settings";
 
 // Ordered the way Connor actually reaches for them day to day — Alerts
 // first, cinema/rule management tucked away behind the gear icon instead
 // (see the Settings button below) rather than taking up a tab he said he
-// won't use as often.
-const TABS: { key: TabKey; label: string }[] = [
-  { key: "alerts", label: "Alerts" },
-  { key: "sessions", label: "Session Times" },
-  { key: "releases", label: "Release Radar" },
-  { key: "watchlist", label: "Watchlist" },
+// won't use as often. Short labels (fit on one line at any width) each
+// paired with an icon, per Connor's ask.
+const TABS: { key: TabKey; label: string; icon: ReactNode }[] = [
+  { key: "alerts", label: "Alerts", icon: <BellIcon className="h-3.5 w-3.5" /> },
+  { key: "sessions", label: "Sessions", icon: <ClockIcon className="h-3.5 w-3.5" /> },
+  { key: "releases", label: "Releases", icon: <FilmIcon className="h-3.5 w-3.5" /> },
+  { key: "watchlist", label: "Watchlist", icon: <BookmarkIcon className="h-3.5 w-3.5" /> },
+  { key: "tickets", label: "My Tickets", icon: <TicketIcon className="h-3.5 w-3.5" /> },
 ];
 
 export function Nav({
@@ -65,7 +68,7 @@ export function Nav({
             className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border text-base-300 hover:border-base-600 hover:text-base-100 ${
               activeTab === "settings" ? "border-accent-dim/60 bg-accent-soft text-accent" : "border-base-700"
             }`}
-            title="Settings — manage cinemas &amp; alert rules"
+            title="Settings — manage cinemas & alert rules"
           >
             <GearIcon className="h-4 w-4" />
           </button>
@@ -87,10 +90,11 @@ export function Nav({
           <button
             key={t.key}
             onClick={() => onTabChange(t.key)}
-            className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+            className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
               activeTab === t.key ? "bg-base-800 text-base-100" : "text-base-400 hover:text-base-200"
             }`}
           >
+            {t.icon}
             {t.label}
           </button>
         ))}

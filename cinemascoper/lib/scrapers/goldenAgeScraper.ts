@@ -65,6 +65,9 @@ export const goldenAgeScraper: CinemaScraper = {
   name: "Golden Age Cinema & Bar (ourgoldenage.com.au)",
 
   async discoverNewSessions({ cinema, candidateMovies, existingSessions, now }) {
+    // Like Ritz Randwick and Dendy, this asks about one candidate movie at
+    // a time (no site-wide "what's on" listing reverse-engineered here),
+    // so it never creates shadow movies itself.
     const discovered: Session[] = [];
 
     for (const movie of candidateMovies) {
@@ -105,6 +108,6 @@ export const goldenAgeScraper: CinemaScraper = {
       }
     }
 
-    return discovered;
+    return { sessions: discovered, shadowMovies: [] };
   },
 };

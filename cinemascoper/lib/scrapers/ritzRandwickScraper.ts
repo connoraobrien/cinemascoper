@@ -82,6 +82,11 @@ export const ritzRandwickScraper: CinemaScraper = {
   async discoverNewSessions({ cinema, candidateMovies, existingSessions, now }) {
     const discovered: Session[] = [];
     const today = sydneyTodayParts(now);
+    // This scraper asks about one candidate movie at a time (it has to —
+    // Ritz's own site has no "what's on today" listing, only a per-movie
+    // page — see the doc comment above), so it can only ever find sessions
+    // for movies CinemaScoper already knows to ask about. It never creates
+    // shadow movies itself.
 
     for (const movie of candidateMovies) {
       const slug = slugifyTitle(movie.title);
@@ -143,6 +148,6 @@ export const ritzRandwickScraper: CinemaScraper = {
       }
     }
 
-    return discovered;
+    return { sessions: discovered, shadowMovies: [] };
   },
 };

@@ -18,7 +18,12 @@ export interface JoinedAlertRule extends AlertRule {
 
 export interface JoinedSession extends Session {
   movieTitle: string;
+  movieDirector?: string;
+  movieReleaseDate: string;
   cinemaName: string;
+  isReleaseDay: boolean;
+  isReRelease: boolean;
+  ticketPurchased: boolean;
 }
 
 export interface NotificationCinemaGroup {
@@ -43,6 +48,7 @@ export interface AppState {
   unreadCount: number;
   lastPollAt: string | null;
   hiddenMovies: Movie[];
+  myTickets: JoinedSession[];
   storage: "kv" | "file";
 }
 

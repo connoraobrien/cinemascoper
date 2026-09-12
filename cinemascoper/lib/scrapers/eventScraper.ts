@@ -1,8 +1,9 @@
-import { Session, SessionFormat } from "../types";
+import { Movie, Session, SessionFormat } from "../types";
 import { makeId } from "../ids";
 import { CinemaScraper } from "./types";
 import { titlesMatch } from "./titleMatch";
 import { sydneyIsoWallClockToUtc } from "./sydneyTime";
+import { resolveShadowMovie } from "./shadowMovies";
 
 /**
  * Event Cinemas (this also covers IMAX Sydney — it's its own Event
@@ -32,7 +33,13 @@ import { sydneyIsoWallClockToUtc } from "./sydneyTime";
  * cinema" form (see `app/api/cinema-search/route.ts`), not typed by hand.
  */
 
-const MAX_DATES_PER_POLL = 10;
+// Widened from 10: Connor reported IMAX Sydney sessions Event's own site
+// shows further out (e.g. "The Odyssey" past the ~1-week mark) not showing
+// up here. Event's `Data.Dates` array is bounded by whatever Event itself
+// has actually opened bookings for, so this cap no longer artificially cuts
+// that short — it's now generous enough to just take everything Event hands
+// back, up to a sane ceiling on per-cinema fetches in one poll tick.
+const MAX_DATES_PER_POLL = 28;
 
 function mapFormat(screenTypeName: string | undefined): SessionFormat {
   const s = (screenTypeName ?? "").toLowerCase();
@@ -89,11 +96,11 @@ async function fetchDay(cinemaId: string, date?: string): Promise<GetSessionsRes
 export const eventScraper: CinemaScraper = {
   name: "Event Cinemas (eventcinemas.com.au)",
 
-  async discoverNewSessions({ cinema, candidateMovies, existingSessions, now }) {
-    if (!cinema.providerId) return [];
+  async discoverNewSessions({ cinema, allKnownMovies, existingSessions, now }) {
+    if (!cinema.providerId) return { sessions: [], shadowMovies: [] };
 
     const first = await fetchDay(cinema.providerId);
-    if (!first || !first.Success) return [];
+    if (!first || !first.Success) return { sessions: [], shadowMovies: [] };
 
     const dates = [first.Data.SelectedDate, ...first.Data.Dates.filter((d) => d !== first.Data.SelectedDate)].slice(
       0,
@@ -103,13 +110,24 @@ export const eventScraper: CinemaScraper = {
     const responses = [first, ...(await Promise.all(dates.slice(1).map((d) => fetchDay(cinema.providerId, d))))];
 
     const discovered: Session[] = [];
+    const knownForMatch = [...allKnownMovies];
+    const shadowMovies: Movie[] = [];
 
     for (const day of responses) {
       if (!day || !day.Success) continue;
 
       for (const eventMovie of day.Data.Movies) {
-        const movie = candidateMovies.find((m) => titlesMatch(m.title, eventMovie.Name));
-        if (!movie) continue;
+        // Match against everything known, not just this tick's near-term
+        // candidates — see the doc comment on `discoverNewSessions` in
+        // lib/scrapers/types.ts.
+        let movie = knownForMatch.find((m) => titlesMatch(m.title, eventMovie.Name));
+        if (!movie) {
+          movie = resolveShadowMovie(eventMovie.Name, knownForMatch);
+          if (!knownForMatch.some((m) => m.id === movie!.id)) {
+            knownForMatch.push(movie);
+            shadowMovies.push(movie);
+          }
+        }
 
         const cinemaModel = eventMovie.CinemaModels.find((c) => String(c.Id) === cinema.providerId);
         if (!cinemaModel) continue;
@@ -120,7 +138,7 @@ export const eventScraper: CinemaScraper = {
           const startsAtIso = startsAt.toISOString();
 
           const alreadyKnown = [...existingSessions, ...discovered].some(
-            (s) => s.movieId === movie.id && s.cinemaId === cinema.id && s.startsAt === startsAtIso
+            (s) => s.movieId === movie!.id && s.cinemaId === cinema.id && s.startsAt === startsAtIso
           );
           if (alreadyKnown) continue;
 
@@ -137,6 +155,6 @@ export const eventScraper: CinemaScraper = {
       }
     }
 
-    return discovered;
+    return { sessions: discovered, shadowMovies };
   },
 };

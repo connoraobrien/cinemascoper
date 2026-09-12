@@ -118,6 +118,12 @@ export async function runPoll(db: DB, allMovies: Movie[], now: Date = new Date()
   const newSessions: Session[] = [];
   const newNotifications: AppNotification[] = [];
 
+  // Grows as scrapers discover shadow movies (see
+  // lib/scrapers/shadowMovies.ts) within this same tick, so a title one
+  // cinema's listing surfaces can immediately be matched — rather than
+  // re-created — by the next cinema's listing later in this same loop.
+  const knownForPoll = [...allMovies];
+
   // Newly-discovered, rule-matching session ids this tick, grouped by
   // movie so each movie folds into at most one digest per tick (see
   // `foldIntoDigest`) rather than one append per session.
@@ -129,12 +135,19 @@ export async function runPoll(db: DB, allMovies: Movie[], now: Date = new Date()
 
     let discovered: Session[] = [];
     try {
-      discovered = await scraper.discoverNewSessions({
+      const result = await scraper.discoverNewSessions({
         cinema,
         candidateMovies: candidates,
+        allKnownMovies: knownForPoll,
         existingSessions: existingForCinema,
         now,
       });
+      discovered = result.sessions;
+      for (const shadow of result.shadowMovies) {
+        if (knownForPoll.some((m) => m.id === shadow.id)) continue;
+        knownForPoll.push(shadow);
+        db.manualMovies.push(shadow);
+      }
     } catch (err) {
       console.error(`[pollEngine] scraper for ${cinema.name} (${cinema.provider}) threw:`, err);
       continue;

@@ -1,7 +1,7 @@
 import { readDB, withDB, storageBackend } from "./store";
 import { seedDefaultsIfEmpty } from "./seedDefaults";
 import { getAllKnownMovies } from "./allMovies";
-import { daysUntil } from "./dateUtils";
+import { daysUntil, isReRelease } from "./dateUtils";
 import { sydneyDateKey } from "./scrapers/sydneyTime";
 import { Movie } from "./types";
 
@@ -37,8 +37,15 @@ export async function buildState() {
   }
 
   const hiddenIds = new Set(db.hiddenMovieIds);
-  const movies = knownMovies.filter((m) => !hiddenIds.has(m.id));
-  const hiddenMovies = knownMovies.filter((m) => hiddenIds.has(m.id));
+  // "scraped" placeholders (an auto-registered title from a cinema listing
+  // that didn't match anything known — see lib/scrapers/shadowMovies.ts)
+  // have no real metadata and aren't meant to be browsed or tracked; they
+  // stay out of both the trackable list and the hidden-movies list, but
+  // their sessions still surface fine in `sessions` below, joined via
+  // `movieById` against the full `knownMovies` list.
+  const trackableMovies = knownMovies.filter((m) => m.source !== "scraped");
+  const movies = trackableMovies.filter((m) => !hiddenIds.has(m.id));
+  const hiddenMovies = trackableMovies.filter((m) => hiddenIds.has(m.id));
 
   const watchlist = db.watchlist
     .map((w) => {
@@ -58,15 +65,34 @@ export async function buildState() {
     }))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
+  const purchasedIds = new Set(db.purchasedSessionIds);
   const sessions = db.sessions
-    .map((s) => ({
-      ...s,
-      movieTitle: movieById(s.movieId)?.title ?? "Unknown movie",
-      cinemaName: cinemaName(s.cinemaId),
-    }))
+    .map((s) => {
+      const movie = movieById(s.movieId);
+      const releaseDate = movie?.releaseDate ?? "";
+      return {
+        ...s,
+        movieTitle: movie?.title ?? "Unknown movie",
+        movieDirector: movie?.director,
+        movieReleaseDate: releaseDate,
+        cinemaName: cinemaName(s.cinemaId),
+        // "Easily tell that the sessions on the day is the film's release
+        // day" — compared on Sydney calendar dates so it lines up with how
+        // sessions are grouped everywhere else (see sydneyDateKey).
+        isReleaseDay: Boolean(releaseDate) && sydneyDateKey(new Date(s.startsAt)) === releaseDate.slice(0, 10),
+        isReRelease: isReRelease(releaseDate, s.startsAt),
+        ticketPurchased: purchasedIds.has(s.id),
+      };
+    })
     .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
 
   const upcomingSessions = sessions.filter((s) => daysUntil(s.startsAt, now) >= 0);
+
+  // "My Tickets" — every upcoming session Connor's actually marked as
+  // booked, sorted soonest-first, regardless of watchlist/cinema filters —
+  // a simple personal itinerary rather than another filtered view of the
+  // same session list.
+  const myTickets = upcomingSessions.filter((s) => s.ticketPurchased);
 
   const sessionById = new Map(db.sessions.map((s) => [s.id, s] as const));
 
@@ -135,6 +161,7 @@ export async function buildState() {
     unreadCount: notifications.filter((n) => !n.read).length,
     lastPollAt: db.lastPollAt,
     hiddenMovies,
+    myTickets,
     storage: storageBackend(),
   };
 }

@@ -20,16 +20,30 @@ of the box.
   per movie (which cinemas, which days — not one alert per screening) and
   release-date changes arrive as their own distinct alert kind; filter by
   kind, delete individual alerts or clear them all.
-- **Session Times** — every upcoming session at your cinemas, filterable by
-  film, cinema and date, organised by day.
-- **Release Radar** — browse upcoming releases (tiles, a date-grouped list,
-  or a real month calendar), filter by release type or "Mainstream only",
-  search by title/director, tap a tile to preview its session times without
-  committing to your watchlist, and search all of TMDB (including
-  already-released films) to add anything the discover window missed.
+- **Sessions** — every upcoming session at your cinemas, not just what's on
+  your watchlist (including special/revival screenings a cinema shows that
+  never matched a tracked movie — see "Shadow movies" below), filterable by
+  film, director, one-or-many cinemas, a date range, format, new-release vs.
+  re-release, and time of day, with a one-tap "only my watchlist" toggle. A
+  session on a film's actual release day is flagged so it's easy to spot.
+- **Releases** (Release Radar) — browse upcoming releases (tiles, a
+  date-grouped list, or a real month calendar; TBA titles sort to the
+  bottom, not the top), filter by release type, "Mainstream only", or "New
+  releases only" (hides old catalogue titles you've added), search by
+  title or director, tap a tile to preview its session times without
+  committing to your watchlist, and search all of TMDB (by title or
+  director, including already-released films) to add anything the discover
+  window missed.
 - **Watchlist** — every tracked movie's sessions, organised by day and
-  noting cinema + format, with ticket links; filter by cinema/date or by
-  released/coming soon/TBA.
+  noting cinema + format, with ticket links and trailers; filter by
+  cinema/date (with quick presets — today, this week, this weekend, next 30
+  days) or by released/coming soon/TBA, and see at a glance (and filter by)
+  which tracked movies actually have session times yet.
+- **My Tickets** — a simple itinerary of sessions you've marked "Got
+  tickets?" from anywhere in the app, distinct from just tracking a movie.
+- Hide a movie you've already seen (or aren't interested in) from Release
+  Radar or Watchlist — it also stops its alerts and drops it off the
+  watchlist; unhide it again from Settings.
 - **Settings** — add/remove cinemas, set **blanket** rules (alert on *any*
   new session at a cinema) or **targeted** rules (alert only for one
   watchlisted movie there), manage hidden movies, and a storage-backend
@@ -38,6 +52,28 @@ of the box.
 - A **"Run check now"** button (and a 45s client-side interval) triggers a
   real background check on demand; `vercel.json` wires the same endpoint to
   a real cron schedule if you deploy it.
+
+### Shadow movies — sessions for titles CinemaScoper doesn't otherwise know
+
+Three providers (Hoyts, Event Cinemas, flicks.com.au) fetch a cinema's whole
+current lineup rather than asking about one movie at a time. When one of
+those lists a title that doesn't match anything in the TMDB catalogue, the
+watchlist, or a manually-added movie — an old catalogue title getting a
+revival screening, a one-off special event like a 70mm season — CinemaScoper
+auto-registers a minimal placeholder for it (see
+`lib/scrapers/shadowMovies.ts`) so its sessions still show up in the
+Sessions tab, rather than being silently dropped. These placeholders have no
+real poster/synopsis/release date, so they're deliberately left out of
+Release Radar and the trackable-movie lists — they're for "what's actually
+on", not for tracking.
+
+Ritz Randwick, Dendy and Golden Age Cinema & Bar don't have this: their
+sites only expose a per-movie lookup (no "what's on today" listing to
+reverse-engineer), so they can only ever report sessions for a movie
+CinemaScoper already knows to ask about. A revival screening at one of
+those three venues (the Ritz's "Celluloid Dreams" 70mm seasons, say) still
+needs that title added — a manual "search all of TMDB and add" is the way
+to make sure it's asked about.
 
 ## Getting started
 
@@ -122,8 +158,8 @@ URL any time to see what it's found.
 > data/matching/alert engine plus every scraper's pure parsing/date logic
 > (title matching, Sydney timezone conversion, DST handling) was exercised
 > directly with `tsx`, independent of Next.js — but please run `npm run
-> build` yourself after installing, and keep an eye on the Session Times
-> Feed after your first real deploy, in case a cinema's site has changed
+> build` yourself after installing, and keep an eye on the Sessions tab
+> after your first real deploy, in case a cinema's site has changed
 > since.
 
 ## Architecture
@@ -151,6 +187,8 @@ with plain Node/`tsx`, independent of the app:
   shared `CinemaScraper` interface and a registry keyed by provider
   (`lib/scrapers/index.ts`). `mockScraper.ts` (a simulated stand-in) is
   kept around for offline dev/demos, not used by any real cinema.
+  `shadowMovies.ts` is the "unrecognised title from a cinema's own lineup"
+  placeholder-movie logic (see "Shadow movies" above).
 - `lib/cinemaSearch.ts` — backs the cinema search in the "Add a cinema"
   form (`app/api/cinema-search/route.ts`), so adding a real cinema is
   "search its name, pick it" rather than "go find some internal code".
@@ -191,6 +229,13 @@ venue uses; for Ritz Randwick, inferring which calendar day a session
 falls on from where the times "wrap around" in an undated list) — each is
 explained where it's implemented, and a miss just means "didn't find a
 session" rather than a crash.
+
+Event Cinemas' own `GetSessions` endpoint only opens bookings so far ahead
+of time in the first place, but this scraper now follows however many dates
+it actually offers (up to a generous cap) rather than an artificially tight
+one — if IMAX/Event sessions still don't reach as far out as the venue's own
+site shows, that's Event's own booking window, not a limit CinemaScoper is
+imposing.
 
 ### Movie data — TMDB
 

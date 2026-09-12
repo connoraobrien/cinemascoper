@@ -4,10 +4,45 @@ import { useEffect, useMemo, useState } from "react";
 import { WatchlistMovie, JoinedSession, Cinema } from "@/lib/clientTypes";
 import { EmptyState, ReleaseTypeBadge, SectionHeading, Chip } from "./ui";
 import { formatDate, daysUntil } from "@/lib/dateUtils";
-import { PlayIcon, PlusIcon, SearchIcon, XIcon } from "./Icons";
+import { EyeOffIcon, PlayIcon, PlusIcon, SearchIcon, XIcon } from "./Icons";
 import { SessionList } from "./SessionList";
 
 type StatusFilter = "all" | "released" | "coming-soon" | "tba";
+type SessionsFilter = "all" | "has-sessions" | "no-sessions";
+
+// Quick date-period presets for the Watchlist's date filter — "can you make
+// the date filtering a little bit easier? So that you can maybe filter by
+// time periods as well?" — each just sets the underlying from/to range, so
+// a manual override afterwards still works exactly like before.
+type DatePreset = "any" | "today" | "week" | "weekend" | "next30";
+
+function presetRange(preset: DatePreset): { from: string; to: string } {
+  const toKey = (d: Date) => d.toISOString().slice(0, 10);
+  const today = new Date();
+  const add = (days: number) => {
+    const d = new Date(today);
+    d.setDate(d.getDate() + days);
+    return d;
+  };
+  switch (preset) {
+    case "today":
+      return { from: toKey(today), to: toKey(today) };
+    case "week":
+      return { from: toKey(today), to: toKey(add(7)) };
+    case "weekend": {
+      // Next Saturday through Sunday (today counts as day 0 of the week).
+      const day = today.getDay();
+      const daysToSat = (6 - day + 7) % 7;
+      const sat = add(daysToSat);
+      const sun = add(daysToSat + 1);
+      return { from: toKey(sat), to: toKey(sun) };
+    }
+    case "next30":
+      return { from: toKey(today), to: toKey(add(30)) };
+    default:
+      return { from: "", to: "" };
+  }
+}
 
 function statusOf(movie: WatchlistMovie): Exclude<StatusFilter, "all"> {
   if (!movie.releaseDate) return "tba";
@@ -19,6 +54,7 @@ interface SearchHit {
   title: string;
   releaseDate: string;
   posterUrl?: string;
+  matchedDirector?: string;
 }
 
 function MovieSearchBox({ onAdd }: { onAdd: (tmdbId: number) => void }) {
@@ -51,8 +87,9 @@ function MovieSearchBox({ onAdd }: { onAdd: (tmdbId: number) => void }) {
     <div className="mb-5 rounded-xl border border-base-700 bg-base-900 p-4">
       <p className="mb-1 text-sm font-semibold text-base-100">Can't find a film?</p>
       <p className="mb-2.5 text-xs text-base-500">
-        Search all of TMDB — including already-released films and older titles a cinema might be
-        re-releasing (e.g. a 70mm season) — and add it straight to your watchlist.
+        Search all of TMDB by title or director — including already-released films and older
+        titles a cinema might be re-releasing (e.g. a 70mm season) — and add it straight to your
+        watchlist.
       </p>
       <div className="relative">
         <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-base-500" />
@@ -89,7 +126,10 @@ function MovieSearchBox({ onAdd }: { onAdd: (tmdbId: number) => void }) {
                     className="h-8 w-8 shrink-0 rounded bg-base-700 bg-cover bg-center"
                     style={r.posterUrl ? { backgroundImage: `url(${r.posterUrl})` } : undefined}
                   />
-                  <span className="flex-1 truncate">{r.title}</span>
+                  <span className="flex-1 truncate">
+                    {r.title}
+                    {r.matchedDirector && <span className="text-base-500"> &middot; Dir. {r.matchedDirector}</span>}
+                  </span>
                   <span className="shrink-0 text-xs text-base-500">
                     {r.releaseDate ? r.releaseDate.slice(0, 4) : "TBA"}
                   </span>
@@ -110,6 +150,8 @@ export function WatchlistTab({
   onSelect,
   onUntrack,
   onAddMovie,
+  onHideMovie,
+  onTogglePurchased,
 }: {
   watchlist: WatchlistMovie[];
   sessions: JoinedSession[];
@@ -118,8 +160,11 @@ export function WatchlistTab({
   onSelect: (movieId: string) => void;
   onUntrack: (movieId: string) => void;
   onAddMovie: (tmdbId: number) => void;
+  onHideMovie: (movieId: string) => void;
+  onTogglePurchased: (sessionId: string) => void;
 }) {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [sessionsFilter, setSessionsFilter] = useState<SessionsFilter>("all");
   const [expandAll, setExpandAll] = useState(false);
   const selected = watchlist.find((m) => m.id === selectedId) ?? null;
   const myCinemaIds = new Set(myCinemas.map((c) => c.id));
@@ -127,7 +172,15 @@ export function WatchlistTab({
   const sessionsFor = (movieId: string) =>
     sessions.filter((s) => s.movieId === movieId && myCinemaIds.has(s.cinemaId));
 
-  const filteredWatchlist = watchlist.filter((m) => statusFilter === "all" || statusOf(m) === statusFilter);
+  const filteredWatchlist = watchlist.filter((m) => {
+    if (statusFilter !== "all" && statusOf(m) !== statusFilter) return false;
+    if (sessionsFilter !== "all") {
+      const hasSessions = sessionsFor(m.id).length > 0;
+      if (sessionsFilter === "has-sessions" && !hasSessions) return false;
+      if (sessionsFilter === "no-sessions" && hasSessions) return false;
+    }
+    return true;
+  });
 
   return (
     <div>
@@ -142,11 +195,19 @@ export function WatchlistTab({
         <EmptyState title="Your watchlist is empty." hint="Track a movie from Release Radar, or search for one above." />
       ) : (
         <>
+          <div className="mb-2.5 flex flex-wrap gap-1.5">
+            {(["all", "coming-soon", "released", "tba"] as StatusFilter[]).map((f) => (
+              <Chip key={f} active={statusFilter === f} onClick={() => setStatusFilter(f)}>
+                {f === "all" ? "All" : f === "coming-soon" ? "Coming soon" : f === "released" ? "Released" : "TBA"}
+              </Chip>
+            ))}
+          </div>
+
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2.5">
             <div className="flex flex-wrap gap-1.5">
-              {(["all", "coming-soon", "released", "tba"] as StatusFilter[]).map((f) => (
-                <Chip key={f} active={statusFilter === f} onClick={() => setStatusFilter(f)}>
-                  {f === "all" ? "All" : f === "coming-soon" ? "Coming soon" : f === "released" ? "Released" : "TBA"}
+              {(["all", "has-sessions", "no-sessions"] as SessionsFilter[]).map((f) => (
+                <Chip key={f} active={sessionsFilter === f} onClick={() => setSessionsFilter(f)}>
+                  {f === "all" ? "Any" : f === "has-sessions" ? "Has session times" : "No session times yet"}
                 </Chip>
               ))}
             </div>
@@ -171,7 +232,13 @@ export function WatchlistTab({
           </div>
 
           {expandAll ? (
-            <AllExpanded watchlist={filteredWatchlist} sessionsFor={sessionsFor} onUntrack={onUntrack} />
+            <AllExpanded
+              watchlist={filteredWatchlist}
+              sessionsFor={sessionsFor}
+              onUntrack={onUntrack}
+              onHideMovie={onHideMovie}
+              onTogglePurchased={onTogglePurchased}
+            />
           ) : (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
               <div>
@@ -190,10 +257,18 @@ export function WatchlistTab({
                               isSelected ? "border-accent-dim/60 bg-accent-soft/40" : "border-base-700 bg-base-900 hover:border-base-600"
                             }`}
                           >
-                            <span
-                              className={`h-10 w-10 shrink-0 rounded-md bg-gradient-to-br ${movie.posterColor} bg-cover bg-center`}
-                              style={movie.posterUrl ? { backgroundImage: `url(${movie.posterUrl})` } : undefined}
-                            />
+                            <span className="relative shrink-0">
+                              <span
+                                className={`block h-10 w-10 rounded-md bg-gradient-to-br ${movie.posterColor} bg-cover bg-center`}
+                                style={movie.posterUrl ? { backgroundImage: `url(${movie.posterUrl})` } : undefined}
+                              />
+                              <span
+                                title={movieSessions.length > 0 ? "Has session times at your cinemas" : "No session times yet"}
+                                className={`absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-base-900 ${
+                                  movieSessions.length > 0 ? "bg-emerald-400" : "bg-base-600"
+                                }`}
+                              />
+                            </span>
                             <div className="min-w-0 flex-1">
                               <p className="truncate text-sm font-semibold text-base-100">{movie.title}</p>
                               <p className="mt-0.5 text-xs text-base-500">
@@ -222,6 +297,8 @@ export function WatchlistTab({
                     sessions={sessionsFor(selected.id)}
                     myCinemas={myCinemas}
                     onUntrack={() => onUntrack(selected.id)}
+                    onHide={() => onHideMovie(selected.id)}
+                    onTogglePurchased={onTogglePurchased}
                   />
                 )}
               </div>
@@ -237,10 +314,14 @@ function AllExpanded({
   watchlist,
   sessionsFor,
   onUntrack,
+  onHideMovie,
+  onTogglePurchased,
 }: {
   watchlist: WatchlistMovie[];
   sessionsFor: (movieId: string) => JoinedSession[];
   onUntrack: (movieId: string) => void;
+  onHideMovie: (movieId: string) => void;
+  onTogglePurchased: (sessionId: string) => void;
 }) {
   if (watchlist.length === 0) return <EmptyState title="Nothing matches this filter." />;
 
@@ -262,14 +343,27 @@ function AllExpanded({
               </div>
               <ReleaseTypeBadge type={movie.releaseType} />
             </div>
-            <button
-              onClick={() => onUntrack(movie.id)}
-              className="shrink-0 rounded-lg border border-base-700 px-2.5 py-1.5 text-xs text-base-400 hover:border-red-800 hover:text-red-400"
-            >
-              Untrack
-            </button>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                onClick={() => onHideMovie(movie.id)}
+                title="You've seen it — hide it and stop its alerts"
+                className="inline-flex items-center gap-1 rounded-lg border border-base-700 px-2.5 py-1.5 text-xs text-base-400 hover:border-base-600 hover:text-base-100"
+              >
+                <EyeOffIcon className="h-3.5 w-3.5" /> Seen it
+              </button>
+              <button
+                onClick={() => onUntrack(movie.id)}
+                className="rounded-lg border border-base-700 px-2.5 py-1.5 text-xs text-base-400 hover:border-red-800 hover:text-red-400"
+              >
+                Untrack
+              </button>
+            </div>
           </div>
-          <SessionList sessions={sessionsFor(movie.id)} emptyHint="No session times published yet at your cinemas." />
+          <SessionList
+            sessions={sessionsFor(movie.id)}
+            emptyHint="No session times published yet at your cinemas."
+            onTogglePurchased={onTogglePurchased}
+          />
         </div>
       ))}
     </div>
@@ -281,16 +375,28 @@ function MovieDetail({
   sessions,
   myCinemas,
   onUntrack,
+  onHide,
+  onTogglePurchased,
 }: {
   movie: WatchlistMovie;
   sessions: JoinedSession[];
   myCinemas: Cinema[];
   onUntrack: () => void;
+  onHide: () => void;
+  onTogglePurchased: (sessionId: string) => void;
 }) {
   const [cinemaFilter, setCinemaFilter] = useState<string>("all");
+  const [preset, setPreset] = useState<DatePreset>("any");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const days = movie.releaseDate ? daysUntil(movie.releaseDate) : 0;
+
+  const applyPreset = (p: DatePreset) => {
+    setPreset(p);
+    const { from, to } = presetRange(p);
+    setFromDate(from);
+    setToDate(to);
+  };
 
   const filteredSessions = useMemo(() => {
     return sessions.filter((s) => {
@@ -313,13 +419,22 @@ function MovieDetail({
           <h3 className="text-lg font-semibold text-base-100">{movie.title}</h3>
           <p className="mt-1 text-sm text-base-400">{movie.synopsis}</p>
         </div>
-        <button
-          onClick={onUntrack}
-          title="Remove from watchlist"
-          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-base-700 px-2.5 py-1.5 text-xs text-base-400 hover:border-red-800 hover:text-red-400"
-        >
-          <XIcon className="h-3.5 w-3.5" /> Untrack
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            onClick={onHide}
+            title="You've seen it — hide it and stop its alerts"
+            className="inline-flex items-center gap-1 rounded-lg border border-base-700 px-2.5 py-1.5 text-xs text-base-400 hover:border-base-600 hover:text-base-100"
+          >
+            <EyeOffIcon className="h-3.5 w-3.5" /> Seen it
+          </button>
+          <button
+            onClick={onUntrack}
+            title="Remove from watchlist"
+            className="inline-flex items-center gap-1 rounded-lg border border-base-700 px-2.5 py-1.5 text-xs text-base-400 hover:border-red-800 hover:text-red-400"
+          >
+            <XIcon className="h-3.5 w-3.5" /> Untrack
+          </button>
+        </div>
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -354,6 +469,19 @@ function MovieDetail({
         </div>
       ) : (
         <div>
+          <div className="mb-2.5 flex flex-wrap gap-1.5">
+            {([
+              ["any", "Any time"],
+              ["today", "Today"],
+              ["week", "This week"],
+              ["weekend", "This weekend"],
+              ["next30", "Next 30 days"],
+            ] as [DatePreset, string][]).map(([p, label]) => (
+              <Chip key={p} active={preset === p} onClick={() => applyPreset(p)}>
+                {label}
+              </Chip>
+            ))}
+          </div>
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <select
               value={cinemaFilter}
@@ -370,7 +498,10 @@ function MovieDetail({
             <input
               type="date"
               value={fromDate}
-              onChange={(e) => setFromDate(e.target.value)}
+              onChange={(e) => {
+                setPreset("any");
+                setFromDate(e.target.value);
+              }}
               className="rounded-lg border border-base-700 bg-base-850 px-2 py-1.5 text-xs text-base-200 focus:border-accent-dim focus:outline-none"
               title="From date"
             />
@@ -378,12 +509,19 @@ function MovieDetail({
             <input
               type="date"
               value={toDate}
-              onChange={(e) => setToDate(e.target.value)}
+              onChange={(e) => {
+                setPreset("any");
+                setToDate(e.target.value);
+              }}
               className="rounded-lg border border-base-700 bg-base-850 px-2 py-1.5 text-xs text-base-200 focus:border-accent-dim focus:outline-none"
               title="To date"
             />
           </div>
-          <SessionList sessions={filteredSessions} emptyHint="No sessions match this filter." />
+          <SessionList
+            sessions={filteredSessions}
+            emptyHint="No sessions match this filter."
+            onTogglePurchased={onTogglePurchased}
+          />
         </div>
       )}
     </div>

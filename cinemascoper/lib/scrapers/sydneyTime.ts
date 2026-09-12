@@ -119,6 +119,20 @@ export function sydneyDateKey(date: Date): string {
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
+/** Minutes since midnight, *as read on a clock in Sydney* — backs the Session Times "time of day"
+ * filter (e.g. "nothing before 5pm"), which has to compare wall-clock time regardless of where the
+ * server itself runs. */
+export function sydneyTimeOfDayMinutes(date: Date): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: SYDNEY_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? "0");
+  return (get("hour") % 24) * 60 + get("minute");
+}
+
 /** Infers the year for a "D Mon" (or similar) date with no year given,
  * assuming it's meant to be soon (never more than ~2 months in the past
  * relative to `now` — handles the December/January rollover). */
