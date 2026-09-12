@@ -3,9 +3,29 @@
 // which pulls in `fs`/`path` via lib/store) so client components never
 // accidentally bundle server-only code.
 
-import { Movie, Cinema, AlertRule, Session, AppNotification, NotificationKind, ReleaseType, CinemaProvider } from "./types";
+import {
+  Movie,
+  Cinema,
+  AlertRule,
+  Session,
+  AppNotification,
+  NotificationKind,
+  ReleaseType,
+  CinemaProvider,
+  SessionFormat,
+} from "./types";
 
-export type { Movie, Cinema, AlertRule, Session, AppNotification, NotificationKind, ReleaseType, CinemaProvider };
+export type {
+  Movie,
+  Cinema,
+  AlertRule,
+  Session,
+  AppNotification,
+  NotificationKind,
+  ReleaseType,
+  CinemaProvider,
+  SessionFormat,
+};
 
 export interface WatchlistMovie extends Movie {
   addedAt: string;
