@@ -65,9 +65,14 @@ export function formatTimeOfDay(iso: string): string {
 const RE_RELEASE_THRESHOLD_DAYS = 450;
 
 /** Whether a session at `sessionStartsAtIso` reads as a re-release of `releaseDate` rather than
- * part of the film's original theatrical run — backs the Session Times "New release / Re-release"
- * filter. A blank `releaseDate` (unknown — e.g. a scraper-discovered title with no TMDB match)
- * counts as a re-release too, since it's clearly not a freshly-tracked upcoming release. */
+ * part of the film's original theatrical run. Connor asked to drop the re-release feature from the
+ * UI entirely ("too hard" to get right — a placeholder with no TMDB match always reads as a
+ * re-release here, which doesn't distinguish a genuine revival screening from just an unmatched
+ * title), so as of that change nothing in the UI reads this anymore — kept computed (same precedent
+ * as `isReleaseDay` below) rather than torn out, since `JoinedSession.isReRelease` staying in the
+ * shape is harmless and someone building a better version of this later has the field ready to use.
+ * A blank `releaseDate` (unknown — e.g. a scraper-discovered title with no TMDB match) counts as a
+ * re-release too, since it's clearly not a freshly-tracked upcoming release. */
 export function isReRelease(releaseDate: string, sessionStartsAtIso: string): boolean {
   if (!releaseDate) return true;
   const releaseMs = new Date(`${releaseDate}T00:00:00`).getTime();

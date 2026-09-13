@@ -42,22 +42,49 @@ import { resolveMovieForTitle } from "./shadowMovies";
 const MAX_DATES_PER_POLL = 28;
 
 // Connor separately reported Event George Street specifically only showing
-// sessions out to a few days ahead ("this coming Friday or whatever") even
-// though `MAX_DATES_PER_POLL` above should allow much further. The likely
-// cause: firing up to 27 simultaneous GET requests at Event's own endpoint
-// for one cinema (`Promise.all` over every date at once, the previous
-// shape here) is aggressive enough to plausibly get some of them
-// rate-limited/dropped — and a failed date fetch was silently skipped with
-// no retry and no log line, which would look exactly like "only the
-// nearest few days came back" without anything actually being wrong with
-// the date list itself. Fetching in smaller batches, with one retry for
-// anything that fails, is meant to rule that out (or fix it, if that's
-// what it was) without needing live access to Event's site to confirm —
-// this sandbox has none. If sessions are still capped short after this,
-// that'd genuinely point at Event's own booking window for that specific
-// venue rather than a fetch problem here.
+// sessions out to a few days ahead ("this coming Friday or whatever"). The
+// batching/retry below (originally: firing up to 27 simultaneous GET
+// requests at Event's own endpoint for one cinema was aggressive enough to
+// plausibly get some rate-limited/dropped, with no retry and no log line to
+// show it) was a real improvement but turned out not to be the whole
+// picture — see `withEventGate` just below for the rest of the story.
 const DATE_FETCH_BATCH_SIZE = 6;
-const DATE_FETCH_RETRY_DELAY_MS = 400;
+const DATE_FETCH_RETRY_COUNT = 2;
+const DATE_FETCH_RETRY_DELAY_MS = 500;
+
+/**
+ * After the per-cinema batching above shipped, Connor reported it got
+ * *worse*: not just George Street trailing off after a few days, but every
+ * Event cinema he tracks (George Street AND IMAX Sydney, both hit here)
+ * failing to load session times at all. The batching fix only bounded how
+ * many requests fly at once *for one cinema* — but `scrapeAllCinemas` (see
+ * `lib/pollEngine.ts`) scrapes every tracked cinema in parallel, and every
+ * Event cinema is really the same `eventcinemas.com.au` host underneath a
+ * different `cinemaId`. So with two-plus Event cinemas tracked, that "safe"
+ * 6-wide batch became two, three, or more 6-wide batches landing on Event's
+ * servers in the same instant — the exact kind of burst the batching was
+ * meant to avoid, just recreated one level up. That fits what Connor saw
+ * far better than a fix that made George Street's individual burst *smaller*
+ * somehow making things worse for it alone would.
+ *
+ * This gate makes every Event cinema's network calls (the "today" lookup
+ * and the batched date fetches) queue behind one another globally, so no
+ * matter how many Event cinemas are tracked, Event's own servers only ever
+ * see one cinema's worth of traffic at a time — restoring the effective
+ * behaviour batching was going for, across cinemas and not just within one.
+ * Everything else about a cinema's scrape (matching titles, TMDB lookups
+ * for unrecognised ones, building sessions) still runs freely in parallel;
+ * only the actual requests to Event are serialized.
+ */
+let eventGateTail: Promise<unknown> = Promise.resolve();
+function withEventGate<T>(fn: () => Promise<T>): Promise<T> {
+  const result = eventGateTail.then(fn, fn);
+  eventGateTail = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
 
 function mapFormat(screenTypeName: string | undefined): SessionFormat {
   const s = (screenTypeName ?? "").toLowerCase();
@@ -104,32 +131,41 @@ interface GetSessionsResponse {
 }
 
 async function fetchDay(cinemaId: string, date?: string): Promise<GetSessionsResponse | null> {
+  const url = new URL("https://www.eventcinemas.com.au/Cinemas/GetSessions");
+  url.searchParams.set("cinemaIds", cinemaId);
+  if (date) url.searchParams.set("date", date);
   try {
-    const url = new URL("https://www.eventcinemas.com.au/Cinemas/GetSessions");
-    url.searchParams.set("cinemaIds", cinemaId);
-    if (date) url.searchParams.set("date", date);
     const res = await fetch(url.toString());
-    if (!res.ok) return null;
+    if (!res.ok) {
+      // Logged (not just swallowed) so a real, ongoing failure shows up in
+      // Vercel's logs with an actual reason (rate-limited? blocked outright?
+      // a genuinely bad cinemaId?) instead of just "no sessions" with
+      // nothing to go on — this is exactly the visibility that was missing
+      // when Event cinemas went quiet after Round 5's first attempt at this.
+      console.error(`[eventScraper] cinema ${cinemaId}: GetSessions returned HTTP ${res.status}`);
+      return null;
+    }
     return await res.json();
-  } catch {
+  } catch (err) {
+    console.error(`[eventScraper] cinema ${cinemaId}: GetSessions request failed:`, err);
     return null;
   }
 }
 
-/** `fetchDay` plus one retry after a short pause — see the doc comment on `DATE_FETCH_BATCH_SIZE`
- * above for why a failed/unsuccessful response here is treated as "probably transient" rather than
- * "this date genuinely has nothing", and logs (rather than silently drops) a date that still fails
- * after the retry, so a real ongoing gap is at least visible in the deploy's logs. */
+/** `fetchDay` plus up to `DATE_FETCH_RETRY_COUNT` retries, each after a short pause — see the doc
+ * comment on `DATE_FETCH_BATCH_SIZE` above for why a failed/unsuccessful response here is treated as
+ * "probably transient" rather than "this date genuinely has nothing", and logs (rather than silently
+ * drops) a date that still fails after every retry, so a real ongoing gap is at least visible in the
+ * deploy's logs. */
 async function fetchDayWithRetry(cinemaId: string, date: string | undefined, label: string): Promise<GetSessionsResponse | null> {
-  const first = await fetchDay(cinemaId, date);
-  if (first && first.Success) return first;
-
-  await new Promise((resolve) => setTimeout(resolve, DATE_FETCH_RETRY_DELAY_MS));
-  const retry = await fetchDay(cinemaId, date);
-  if (!retry || !retry.Success) {
-    console.error(`[eventScraper] cinema ${cinemaId}: gave up on ${label} after a retry`);
+  let last: GetSessionsResponse | null = null;
+  for (let attempt = 0; attempt <= DATE_FETCH_RETRY_COUNT; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, DATE_FETCH_RETRY_DELAY_MS));
+    last = await fetchDay(cinemaId, date);
+    if (last && last.Success) return last;
   }
-  return retry;
+  console.error(`[eventScraper] cinema ${cinemaId}: gave up on ${label} after ${DATE_FETCH_RETRY_COUNT} retries`);
+  return last;
 }
 
 /** Fetches every date in `dates` for `cinemaId`, `DATE_FETCH_BATCH_SIZE` at a time rather than all
@@ -149,19 +185,65 @@ export const eventScraper: CinemaScraper = {
   async discoverNewSessions({ cinema, allKnownMovies, existingSessions, now }) {
     if (!cinema.providerId) return { sessions: [], shadowMovies: [] };
 
-    const first = await fetchDayWithRetry(cinema.providerId, undefined, "today");
-    if (!first || !first.Success) return { sessions: [], shadowMovies: [] };
+    // Every network call below goes through `withEventGate` — see its doc
+    // comment above for why: without it, several Event cinemas scraped in
+    // parallel (the normal case — `scrapeAllCinemas` scrapes every tracked
+    // cinema at once) would still burst Event's servers even though each
+    // cinema individually behaves.
+    const first = await withEventGate(() => fetchDayWithRetry(cinema.providerId!, undefined, "today"));
+    if (!first || !first.Success) {
+      console.error(`[eventScraper] cinema ${cinema.providerId} (${cinema.name}): couldn't load today's sessions at all this tick`);
+      return { sessions: [], shadowMovies: [] };
+    }
 
     const dates = [first.Data.SelectedDate, ...first.Data.Dates.filter((d) => d !== first.Data.SelectedDate)].slice(
       0,
       MAX_DATES_PER_POLL
     );
 
-    const responses = [first, ...(await fetchDaysInBatches(cinema.providerId, dates.slice(1)))];
+    const responses = [first, ...(await withEventGate(() => fetchDaysInBatches(cinema.providerId!, dates.slice(1))))];
 
     const discovered: Session[] = [];
     const knownForMatch = [...allKnownMovies];
     const shadowMovies: Movie[] = [];
+
+    // Event's `MAX_DATES_PER_POLL` widening means a single poll tick can see
+    // this movie lineup dozens of times over (once per date page), but only
+    // *distinct, still-unmatched* titles actually need a TMDB lookup. Find
+    // them all first and resolve every one of them at once — rather than
+    // `await`ing `resolveMovieForTitle` one at a time inside the loop below,
+    // which serialized what's often 10-20+ distinct titles' worth of TMDB
+    // round-trips back to back. That serial chain was itself a meaningful
+    // chunk of how long one Event cinema's scrape took, on top of the date
+    // fetches above — this cuts it down to the duration of the single
+    // slowest lookup instead of the sum of all of them.
+    const unmatchedTitles = new Set<string>();
+    for (const day of responses) {
+      if (!day || !day.Success) continue;
+      for (const eventMovie of day.Data.Movies) {
+        if (!knownForMatch.some((m) => titlesMatch(m.title, eventMovie.Name))) {
+          unmatchedTitles.add(eventMovie.Name);
+        }
+      }
+    }
+    const resolved = await Promise.all(
+      [...unmatchedTitles].map(async (title) => [title, await resolveMovieForTitle(title, knownForMatch)] as const)
+    );
+    // Keyed by the exact raw Event title rather than re-matched via
+    // `titlesMatch` below — `resolveMovieForTitle` can fall back to TMDB's
+    // top search hit even when it doesn't cleanly `titlesMatch` the query
+    // (see `findTmdbMovieByTitle`), so re-deriving the movie for a title
+    // by fuzzy-matching a second time could miss it and silently drop that
+    // title's sessions. Resolving it once and remembering the answer against
+    // the literal title it was resolved for sidesteps that entirely.
+    const resolvedByRawTitle = new Map<string, Movie>();
+    for (const [title, movie] of resolved) {
+      resolvedByRawTitle.set(title, movie);
+      if (!knownForMatch.some((m) => m.id === movie.id)) {
+        knownForMatch.push(movie);
+        shadowMovies.push(movie);
+      }
+    }
 
     for (const day of responses) {
       if (!day || !day.Success) continue;
@@ -169,15 +251,12 @@ export const eventScraper: CinemaScraper = {
       for (const eventMovie of day.Data.Movies) {
         // Match against everything known, not just this tick's near-term
         // candidates — see the doc comment on `discoverNewSessions` in
-        // lib/scrapers/types.ts.
-        let movie = knownForMatch.find((m) => titlesMatch(m.title, eventMovie.Name));
-        if (!movie) {
-          movie = await resolveMovieForTitle(eventMovie.Name, knownForMatch);
-          if (!knownForMatch.some((m) => m.id === movie!.id)) {
-            knownForMatch.push(movie);
-            shadowMovies.push(movie);
-          }
-        }
+        // lib/scrapers/types.ts. Every title was either already matched
+        // above or resolved by the batch just above, so this is a
+        // synchronous lookup now, not a fallback that still needs to await
+        // anything.
+        const movie = knownForMatch.find((m) => titlesMatch(m.title, eventMovie.Name)) ?? resolvedByRawTitle.get(eventMovie.Name);
+        if (!movie) continue; // defensive only — every title was resolved above
 
         const cinemaModel = eventMovie.CinemaModels.find((c) => String(c.Id) === cinema.providerId);
         if (!cinemaModel) continue;

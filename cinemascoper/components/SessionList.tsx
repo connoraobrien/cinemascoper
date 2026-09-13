@@ -70,11 +70,6 @@ function SessionRow({
             Preview
           </span>
         )}
-        {s.isReRelease && (
-          <span className="rounded-full border border-amber-700/40 bg-amber-950/40 px-1.5 py-0.5 text-[11px] text-amber-300">
-            Re-release
-          </span>
-        )}
       </div>
       <div className="flex items-center gap-1.5">
         {onTogglePurchased && (

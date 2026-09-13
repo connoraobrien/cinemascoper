@@ -9,8 +9,6 @@ import { MultiSelectDropdown } from "./MultiSelectDropdown";
 import { sydneyTimeOfDayMinutes } from "@/lib/scrapers/sydneyTime";
 import { formatDayLabel, formatTimeOfDay, monthYearLabel } from "@/lib/dateUtils";
 
-type ReleaseKindFilter = "all" | "new" | "re-release";
-
 function timeStringToMinutes(t: string): number | null {
   if (!t) return null;
   const [h, m] = t.split(":").map(Number);
@@ -19,8 +17,8 @@ function timeStringToMinutes(t: string): number | null {
 }
 
 /** One bookable time slot — the innermost thing in the day → movie → cinema
- * hierarchy below. Shows the time, format badge, preview/re-release badges,
- * a "got tickets" toggle, and a tickets button, all in one compact pill —
+ * hierarchy below. Shows the time, format badge, preview badge, a "got
+ * tickets" toggle, and a tickets button, all in one compact pill —
  * everything a flat `SessionList` row showed, just nested one level deeper
  * now that cinema/movie are already established by the group it's in. */
 function SessionTimeChip({
@@ -42,11 +40,6 @@ function SessionTimeChip({
           className="rounded-full border border-violet-700/40 bg-violet-950/40 px-1.5 py-0.5 text-[11px] font-medium text-violet-300"
         >
           Preview
-        </span>
-      )}
-      {session.isReRelease && (
-        <span className="rounded-full border border-amber-700/40 bg-amber-950/40 px-1.5 py-0.5 text-[11px] text-amber-300">
-          Re-release
         </span>
       )}
       <button
@@ -187,10 +180,12 @@ function DayMovieCinemaSessionView({
  * multi-select dropdown — see `MultiSelectDropdown` — rather than a row of
  * toggle chips, which got "chunky" once there were more than a few
  * cinemas), format (same dropdown treatment), film, director, date range,
- * new-release-vs-re-release, and time of day — plus a one-tap "only films
- * on my watchlist" toggle, so the same tab covers both "what's on at my
- * cinemas generally" and "what's on for what I'm following", per Connor's
- * ask.
+ * and time of day — plus a one-tap "only films on my watchlist" toggle, so
+ * the same tab covers both "what's on at my cinemas generally" and "what's
+ * on for what I'm following", per Connor's ask. (Used to also have a
+ * new-release-vs-re-release filter; Connor asked for that to be dropped —
+ * see the doc comment on `isReRelease` in `lib/dateUtils.ts` for why the
+ * underlying computation is still there, just unused.)
  */
 export function SessionTimesTab({
   sessions,
@@ -213,7 +208,6 @@ export function SessionTimesTab({
   const [fromTime, setFromTime] = useState("");
   const [toTime, setToTime] = useState("");
   const [selectedFormats, setSelectedFormats] = useState<Set<SessionFormat>>(new Set());
-  const [releaseKind, setReleaseKind] = useState<ReleaseKindFilter>("all");
   const [watchlistOnly, setWatchlistOnly] = useState(false);
 
   const availableFormats = useMemo(() => {
@@ -234,8 +228,6 @@ export function SessionTimesTab({
       if (selectedCinemaIds.size > 0 && !selectedCinemaIds.has(s.cinemaId)) return false;
       if (watchlistOnly && !watchlistIds.has(s.movieId)) return false;
       if (selectedFormats.size > 0 && !selectedFormats.has(s.format)) return false;
-      if (releaseKind === "new" && s.isReRelease) return false;
-      if (releaseKind === "re-release" && !s.isReRelease) return false;
       const dateKey = s.startsAt.slice(0, 10);
       if (fromDate && dateKey < fromDate) return false;
       if (toDate && dateKey > toDate) return false;
@@ -252,7 +244,6 @@ export function SessionTimesTab({
     watchlistOnly,
     watchlistIds,
     selectedFormats,
-    releaseKind,
     fromDate,
     toDate,
     fromMinutes,
@@ -265,7 +256,6 @@ export function SessionTimesTab({
     selectedCinemaIds.size > 0 ||
     watchlistOnly ||
     selectedFormats.size > 0 ||
-    releaseKind !== "all" ||
     fromDate ||
     toDate ||
     fromTime ||
@@ -280,7 +270,6 @@ export function SessionTimesTab({
     setFromTime("");
     setToTime("");
     setSelectedFormats(new Set());
-    setReleaseKind("all");
     setWatchlistOnly(false);
   };
 
@@ -288,7 +277,7 @@ export function SessionTimesTab({
     <div>
       <SectionHeading
         title="Sessions"
-        subtitle="Every upcoming session at your cinemas — including special screenings and re-releases not on your watchlist — filterable every which way."
+        subtitle="Every upcoming session at your cinemas — including special screenings not on your watchlist — filterable every which way."
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -297,16 +286,6 @@ export function SessionTimesTab({
         </Chip>
         <Chip active={watchlistOnly} onClick={() => setWatchlistOnly(true)}>
           Only my watchlist
-        </Chip>
-        <span className="mx-1 h-4 w-px bg-base-800" />
-        <Chip active={releaseKind === "all"} onClick={() => setReleaseKind("all")}>
-          New &amp; re-releases
-        </Chip>
-        <Chip active={releaseKind === "new"} onClick={() => setReleaseKind("new")}>
-          New releases only
-        </Chip>
-        <Chip active={releaseKind === "re-release"} onClick={() => setReleaseKind("re-release")}>
-          Re-releases only
         </Chip>
       </div>
 

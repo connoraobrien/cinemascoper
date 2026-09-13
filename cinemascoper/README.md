@@ -28,8 +28,8 @@ of the box.
   (including special/revival screenings a cinema shows that never matched a
   tracked movie — see "Shadow movies" below), filterable by film, director,
   cinema (a real multi-select dropdown, not a row of chips), format (same),
-  a date range, new-release vs. re-release, and time of day, with a one-tap
-  "only my watchlist" toggle. An individual screening ahead of a movie's
+  a date range, and time of day, with a one-tap "only my watchlist" toggle.
+  An individual screening ahead of a movie's
   official release day is flagged as a "Preview".
 - **Releases** (Release Radar) — browse upcoming releases (tiles, a
   date-grouped list, or a real month calendar — a busy day's "+N more" is
@@ -80,9 +80,12 @@ placeholder (a "shadow movie") so its sessions still show up in the
 Sessions tab rather than being silently dropped. A placeholder has no real
 poster/synopsis/release date, so it's deliberately left out of Release
 Radar and the trackable-movie lists — it's for "what's actually on", not
-for tracking — and its sessions read as re-releases by default (see
-`isReRelease` in `lib/dateUtils.ts`) since there's no real release date to
-compare against, which is the correct read for a genuine shadow movie.
+for tracking. (There used to be a "new release vs. re-release" filter on
+Sessions that leaned on this — a placeholder with no release date always
+read as a re-release. Dropped: telling a genuine revival screening apart
+from "TMDB just doesn't have a release date for this title" wasn't
+reliable from scraped data alone, so `isReRelease` in `lib/dateUtils.ts`
+is still computed but nothing in the UI reads it anymore.)
 
 Every real cinema integration is still capped at whatever booking window
 that venue's own site actually opens — typically about a week (Ritz,
@@ -245,7 +248,7 @@ its own doc comment.
 | Provider | Covers | How |
 | --- | --- | --- |
 | `hoyts` | Any Hoyts cinema | `apim-aea.hoyts.com.au`'s own JSON API |
-| `event` | Any Event Cinemas venue, including IMAX Sydney (its own venue, not part of George Street) | `eventcinemas.com.au`'s own `GetSessions` JSON endpoint |
+| `event` | Any Event Cinemas venue, including IMAX Sydney (its own venue, not part of George Street) | `eventcinemas.com.au`'s own `GetSessions` JSON endpoint, requests queued globally across every tracked Event cinema (see below) |
 | `dendy` | Newtown, Canberra, Coorparoo, Portside, Southport | Each venue's own `<subdomain>.dendy.com.au/graphql` — a `movies(type: "now-playing-and-coming-soon")` query for the whole lineup, then `showingsForDate` per movie |
 | `golden-age` | Golden Age Cinema & Bar, Surry Hills (fixed, single venue) | `ourgoldenage.com.au/films/now-showing` for the whole lineup, then each film's own page + the "Ferve" ticketing widget API for its times |
 | `ritz-randwick` | Ritz Randwick (fixed, single venue) | `ritzcinemas.com.au`'s own day-tabbed `/now-showing` listing (today, tomorrow, and the next 5 calendar days by weekday name) — every movie showing each day, with the day known from which URL was fetched |
@@ -276,15 +279,22 @@ of time in the first place, but this scraper now follows however many dates
 it actually offers (up to a generous cap) rather than an artificially tight
 one — if IMAX/Event sessions still don't reach as far out as the venue's own
 site shows, that's Event's own booking window, not a limit CinemaScoper is
-imposing. Those date fetches happen in small batches (6 at a time) with one
-retry for anything that fails, rather than firing every date at once —
-Connor reported Event George Street specifically only showing sessions a
-few days out despite the wider date cap, which looked consistent with some
-of ~27 simultaneous requests getting silently rate-limited/dropped; if it's
-still short after this, that'd point at Event's own booking window for that
-specific venue rather than a fetch problem (`[eventScraper]` lines in the
-deploy's logs will say which — a specific date failing after a retry vs.
-no errors logged at all).
+imposing. Those date fetches happen in small batches (6 at a time, up to 2
+retries) rather than firing every date at once, *and* — since several Event
+cinemas are scraped in parallel (each tracked cinema is checked at the same
+time, not one after another) and every Event venue is really the same
+`eventcinemas.com.au` host underneath a different `cinemaId` — every Event
+cinema's requests now also queue behind one another globally, so tracking
+more than one Event venue doesn't multiply the burst hitting Event's own
+servers at once. (This followed a real regression: a first attempt just at
+bounding the burst *within* one cinema wasn't enough once more than one
+Event cinema was scraped at the same time — Connor reported every Event
+cinema, including IMAX Sydney, failing to load sessions at all after that
+first fix, not just George Street trailing off short.) `fetchDay` also now
+logs the actual HTTP status or error on a failed request rather than
+swallowing it silently, so if sessions are still missing after this,
+`[eventScraper]` lines in the deploy's logs will say why instead of nothing
+at all.
 
 **Formats** (`SessionFormat` in `lib/types.ts`) now cover 2D, 3D, IMAX,
 VMAX, 4DX, Dolby Cinema, Gold Class, Subtitled, 70mm, and Extreme Screen.
