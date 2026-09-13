@@ -46,7 +46,11 @@ of the box.
   see just that day's screenings) rather than one long stacked list; filter
   by cinema/date (with quick presets — today, this week, this weekend, next
   30 days) or by released/coming soon/TBA, and see at a glance (and filter
-  by) which tracked movies actually have session times yet.
+  by) which tracked movies actually have session times yet. Sorted by
+  release date, soonest first, with TBA titles at the bottom (a movie with
+  no known release date used to sort to the *top* — an empty string sorts
+  before any real date — same bug Release Radar's own listing had already
+  been fixed for; fixed here too now).
 - **My Tickets** — a simple itinerary of sessions you've marked "Got
   tickets?" from anywhere in the app, distinct from just tracking a movie.
 - Hide a movie you've already seen (or aren't interested in) from Release
@@ -276,35 +280,67 @@ entirely rather than tuning it.
 
 Event Cinemas' own `GetSessions` endpoint only opens bookings so far ahead
 of time in the first place, but this scraper now follows however many dates
-it actually offers (up to a generous cap) rather than an artificially tight
-one — if IMAX/Event sessions still don't reach as far out as the venue's own
-site shows, that's Event's own booking window, not a limit CinemaScoper is
-imposing. Those date fetches happen in small batches (6 at a time, up to 2
-retries) rather than firing every date at once, *and* — since several Event
-cinemas are scraped in parallel (each tracked cinema is checked at the same
-time, not one after another) and every Event venue is really the same
-`eventcinemas.com.au` host underneath a different `cinemaId` — every Event
-cinema's requests now also queue behind one another globally, so tracking
-more than one Event venue doesn't multiply the burst hitting Event's own
-servers at once. (This followed a real regression: a first attempt just at
-bounding the burst *within* one cinema wasn't enough once more than one
-Event cinema was scraped at the same time — Connor reported every Event
-cinema, including IMAX Sydney, failing to load sessions at all after that
-first fix, not just George Street trailing off short.) `fetchDay` also now
-logs the actual HTTP status or error on a failed request rather than
-swallowing it silently, so if sessions are still missing after this,
-`[eventScraper]` lines in the deploy's logs will say why instead of nothing
-at all.
+it actually offers (up to a generous cap, 40) rather than an artificially
+tight one — if IMAX/Event sessions still don't reach as far out as the
+venue's own site shows, that's Event's own booking window, not a limit
+CinemaScoper is imposing. Those date fetches happen in small batches (6 at
+a time, up to 2 retries) rather than firing every date at once, and every
+tracked Event cinema's requests also queue behind one another globally
+(every Event venue is really the same `eventcinemas.com.au` host underneath
+a different `cinemaId`), so tracking more than one doesn't multiply the
+burst hitting Event's own servers at once.
+
+None of that turned out to be the actual reason Event cinemas stopped
+loading sessions, though. With a live link to a real browser and real
+network access, the `GetSessions` endpoint was called directly for both
+George Street and IMAX Sydney and came back clean every time — so the
+endpoint itself was never broken. The real difference between that working
+browser request and this scraper's own: a plain `fetch(url)` sends none of
+a real browser's headers, and eventcinemas.com.au turned out to be served
+through Cloudflare (confirmed via the response's own `server: cloudflare`
+header) — a very common setup for a site's bot-management rules to quietly
+block a bare server-side request to an internal API like this one (no API
+key, not meant for third-party use) while leaving ordinary browser traffic
+untouched. This fits everything reported about it: every Event cinema
+failing at once (a host-level block, not a per-cinema issue), and nothing
+wrong turning up in a from-a-browser check. Fixed by sending real
+browser-like headers (`User-Agent`, `Accept`, `Accept-Language`, `Referer`)
+on every request. This couldn't be verified end-to-end (a real Vercel
+deploy can't be triggered or watched from here), so `fetchDay` also now
+logs the actual HTTP status *and* the response's `server`/`cf-ray` headers
+on a failed request, so if sessions are still missing after this,
+`[eventScraper]` lines in the deploy's logs will confirm or rule out the
+Cloudflare theory with real evidence rather than another guess.
 
 **Formats** (`SessionFormat` in `lib/types.ts`) now cover 2D, 3D, IMAX,
-VMAX, 4DX, Dolby Cinema, Gold Class, Subtitled, 70mm, and Extreme Screen.
-VMAX used to fold into "IMAX" in `eventScraper.ts` (the closest fit at the
-time) — it's now its own distinct value there, since it's a visually and
-technically different large-format brand. 4DX and Dolby Cinema detection on
-Hoyts/Ritz is a best-effort keyword match, not confirmed against a real
-live example of either at those venues yet (no example seen in testing) —
-worth a look after your first deploy if either of those runs at a cinema
-you've added.
+VMAX, 4DX, Dolby Cinema, Gold Class, Subtitled, 70mm, Extreme Screen,
+Boutique, ScreenX, Onyx, Apex, and D-BOX. VMAX used to fold into "IMAX" in
+`eventScraper.ts` (the closest fit at the time) — it's now its own
+distinct value there, since it's a visually and technically different
+large-format brand. The last five were added after live-checking each
+provider's real API data directly (rather than guessing at what might be
+missing) turned up genuine gaps: Event's own real `ScreenTypeName` for
+VMAX is literally `"V-Max"` — a hyphen the old format matching never
+accounted for, so every real VMAX session was silently showing as plain
+"2D" — plus a real, separate "Boutique" screen type at George Street with
+no mapping at all. Hoyts' real `typeId` values (checked across several
+venues, picked by cross-referencing each one's own advertised large-format
+features) include `SCREENX`, `ONYX`, `APEX`, and `DBOX` alongside the
+already-modelled `STANDARD`/`LUX`/`XTREME`/`IMAX` — none of those four had
+a mapping before either. 4DX and Dolby Cinema detection on Hoyts/Ritz
+remains a best-effort keyword match — no real example of either turned up
+in this round's check, but that only rules out the specific venues
+checked, not every Hoyts/Ritz venue.
+
+Dendy's and Golden Age's session data was also checked directly this
+round: Golden Age's live listing shows no format badges at all (a single
+small screen genuinely has nothing else to model, so its "2D" is
+correct), while Dendy's `showingsForDate` response genuinely doesn't
+expose a per-session format field to read — its "2D" is a real gap in
+what Dendy's own API hands back rather than a bug in how it's read, and
+fixing it for real would need finding a different, richer query somewhere
+on Dendy's own site. flicks.com.au (the ~400-cinema universal fallback)
+wasn't checked this round.
 
 ### Movie data — TMDB
 

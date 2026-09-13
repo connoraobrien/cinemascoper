@@ -38,8 +38,14 @@ import { resolveMovieForTitle } from "./shadowMovies";
 // up here. Event's `Data.Dates` array is bounded by whatever Event itself
 // has actually opened bookings for, so this cap no longer artificially cuts
 // that short — it's now generous enough to just take everything Event hands
-// back, up to a sane ceiling on per-cinema fetches in one poll tick.
-const MAX_DATES_PER_POLL = 28;
+// back, up to a sane ceiling on per-cinema fetches in one poll tick. Widened
+// again 28 → 40 after a live check found George Street's own `Data.Dates`
+// currently has 32 entries (including a couple of already-on-sale dates
+// months out, e.g. early December) — 28 was quietly cutting off the last
+// few of those, a real instance of "other screenings not getting picked
+// up" even before the header/bot-detection fix above, not just a
+// format-labelling issue.
+const MAX_DATES_PER_POLL = 40;
 
 // Connor separately reported Event George Street specifically only showing
 // sessions out to a few days ahead ("this coming Friday or whatever"). The
@@ -87,16 +93,25 @@ function withEventGate<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 function mapFormat(screenTypeName: string | undefined): SessionFormat {
-  const s = (screenTypeName ?? "").toLowerCase();
+  // Stripped of spaces/hyphens before matching — found via a live check of
+  // a real GetSessions response that Event's own `ScreenTypeName` for VMAX
+  // is literally "V-Max", which the previous plain `.includes("vmax")`
+  // check never matched (the hyphen breaks the substring match), so every
+  // real VMAX session was silently falling through to plain "2D". Stripping
+  // punctuation before matching, rather than special-casing "v-max", also
+  // means a future cosmetic respelling ("V Max", "V-MAX") won't quietly
+  // reintroduce the same bug.
+  const s = (screenTypeName ?? "").toLowerCase().replace(/[\s-]/g, "");
   // Checked before the plain "imax" test below, since "imax" alone would
-  // otherwise also match e.g. "VMAX" was never actually a substring match —
-  // this is just keeping the more specific brands first for clarity.
+  // otherwise also match "vmax" — this is just keeping the more specific
+  // brands first for clarity.
   if (s.includes("vmax")) return "VMAX"; // Event's own large-format brand — now modelled distinctly rather than folded into IMAX
   if (s.includes("imax")) return "IMAX";
   if (s.includes("4dx")) return "4DX";
   if (s.includes("dolby")) return "Dolby Cinema";
+  if (s.includes("boutique")) return "Boutique"; // confirmed live at George Street — a real, distinct Event screen type, previously unmodelled
   if (s.includes("gold")) return "Gold Class";
-  if (s.includes("70mm") || s.includes("70 mm")) return "70mm";
+  if (s.includes("70mm")) return "70mm";
   if (s.includes("extreme")) return "Extreme Screen";
   if (s.includes("subtitle")) return "Subtitled";
   return "2D";
@@ -130,19 +145,55 @@ interface GetSessionsResponse {
   };
 }
 
+// Found by actually calling this endpoint two ways side by side: a plain
+// `fetch(url)` with no headers (what this scraper was sending) against a
+// real browser tab's own `fetch` to the same URL. Both got a real 200
+// response *in that test* — but eventcinemas.com.au is served through
+// Cloudflare (confirmed via the live response's own `server: cloudflare`
+// header), which very commonly runs bot-management rules on exactly this
+// kind of endpoint: a real API a page's own JS calls, not meant for
+// third-party use, with no API key to gate it instead. A bare server-side
+// fetch — Vercel's outbound requests come from well-known datacenter IP
+// ranges, with none of a real browser's `User-Agent`, `Accept-Language`, or
+// `sec-ch-ua` client hints — is exactly the shape Cloudflare's heuristics
+// are built to catch, and would explain Connor's report precisely: every
+// Event cinema failing at once (a host-level block hits every request to it
+// the same way, unlike a per-cinema rate limit) that a from-the-browser
+// spot-check can't reproduce (a real browser passes the same checks a real
+// visitor would). Sending headers that make this request look like it came
+// from an ordinary page load — a real desktop Chrome `User-Agent`, `Accept`,
+// `Accept-Language`, and a `Referer` pointing at the cinema's own page — is
+// the standard fix for this class of block. Couldn't be confirmed by
+// actually redeploying and watching it succeed (this sandbox has no
+// outbound access to eventcinemas.com.au to test against), so if sessions
+// are still missing after this, the status/response logging below will at
+// least show whether it's still the same failure or something new.
+const BROWSER_HEADERS: Record<string, string> = {
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+  Accept: "application/json, text/plain, */*",
+  "Accept-Language": "en-AU,en;q=0.9",
+  Referer: "https://www.eventcinemas.com.au/",
+};
+
 async function fetchDay(cinemaId: string, date?: string): Promise<GetSessionsResponse | null> {
   const url = new URL("https://www.eventcinemas.com.au/Cinemas/GetSessions");
   url.searchParams.set("cinemaIds", cinemaId);
   if (date) url.searchParams.set("date", date);
   try {
-    const res = await fetch(url.toString());
+    const res = await fetch(url.toString(), { headers: BROWSER_HEADERS });
     if (!res.ok) {
       // Logged (not just swallowed) so a real, ongoing failure shows up in
       // Vercel's logs with an actual reason (rate-limited? blocked outright?
       // a genuinely bad cinemaId?) instead of just "no sessions" with
       // nothing to go on — this is exactly the visibility that was missing
       // when Event cinemas went quiet after Round 5's first attempt at this.
-      console.error(`[eventScraper] cinema ${cinemaId}: GetSessions returned HTTP ${res.status}`);
+      // `cf-ray`/`server` are included specifically to confirm or rule out
+      // the Cloudflare-block theory above from the real logs, not guesswork.
+      console.error(
+        `[eventScraper] cinema ${cinemaId}: GetSessions returned HTTP ${res.status} ` +
+          `(server=${res.headers.get("server") ?? "?"}, cf-ray=${res.headers.get("cf-ray") ?? "?"})`
+      );
       return null;
     }
     return await res.json();

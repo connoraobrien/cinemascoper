@@ -12,6 +12,22 @@ export type ReleaseType = "Standard Theatrical" | "Limited Release" | "Film Fest
 // and Event venues run, even though no scraper here has a *confirmed* live
 // example of one yet (see the doc comments on hoytsScraper/eventScraper's
 // mapFormat for exactly what's confirmed vs best-effort).
+//
+// Widened again (Connor: "there's definitely other formats... that aren't
+// getting picked up") after live-checking each provider's *actual* current
+// data against what `mapFormat` in `hoytsScraper.ts`/`eventScraper.ts` was
+// matching against — real sessions were falling through to plain "2D" that
+// shouldn't have been: Event's own real `ScreenTypeName` for VMAX is
+// literally "V-Max" (a hyphen `mapFormat`'s old `"vmax"` substring check
+// never matched) and Event also runs a confirmed, real "Boutique" screen
+// type with no format of its own to map to at all. Hoyts' real `typeId`
+// values (confirmed live across several venues, not every Hoyts venue runs
+// every one) include three more format brands with no mapping previously:
+// `SCREENX` (a panoramic wraparound-screen format), `ONYX` (Samsung's LED
+// cinema screen, no projector), and `APEX` (Hoyts' newest ultra-premium
+// format) — plus `DBOX` (D-BOX motion seating, confirmed live at several
+// venues; a seating feature more than a screen format, but real and
+// distinct enough from plain "2D" to keep separate rather than fold in).
 export type SessionFormat =
   | "2D"
   | "3D"
@@ -22,7 +38,12 @@ export type SessionFormat =
   | "Gold Class"
   | "Subtitled"
   | "70mm"
-  | "Extreme Screen";
+  | "Extreme Screen"
+  | "Boutique"
+  | "ScreenX"
+  | "Onyx"
+  | "Apex"
+  | "D-BOX";
 
 /**
  * Which real (or simulated) session-times source a cinema is scraped from.

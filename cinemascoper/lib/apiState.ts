@@ -53,7 +53,20 @@ export async function buildState() {
       return movie ? { ...movie, addedAt: w.addedAt } : null;
     })
     .filter((m): m is Movie & { addedAt: string } => Boolean(m))
-    .sort((a, b) => a.releaseDate.localeCompare(b.releaseDate));
+    // A movie with no known release date (TBA) has `releaseDate: ""`, which
+    // `localeCompare` sorts *before* any real date string — so a plain
+    // `a.releaseDate.localeCompare(b.releaseDate)` put every TBA title at
+    // the very top of the Watchlist instead of the bottom. Same bug
+    // `sortByReleaseDate` in `components/ReleasesTab.tsx` already handles
+    // for Release Radar's own listing; this is the same fix for the
+    // Watchlist's list, which builds its order here rather than in that
+    // component.
+    .sort((a, b) => {
+      if (!a.releaseDate && !b.releaseDate) return a.title.localeCompare(b.title);
+      if (!a.releaseDate) return 1;
+      if (!b.releaseDate) return -1;
+      return a.releaseDate.localeCompare(b.releaseDate);
+    });
 
   const cinemas = [...db.cinemas].sort((a, b) => a.name.localeCompare(b.name));
 

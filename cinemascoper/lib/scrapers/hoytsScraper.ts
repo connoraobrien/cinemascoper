@@ -27,8 +27,20 @@ import { resolveMovieForTitle } from "./shadowMovies";
  *  - Ticket links: `https://www.hoyts.com.au/orders/tickets?cinemaId=<code>&sessionId=<id>`
  *    — confirmed live against hoyts.com.au's own session-time buttons.
  *
- * `typeId` maps onto our small `SessionFormat` enum only approximately —
- * Hoyts has more screen types (Xtremescreen, LUX, D-BOX, …) than we model.
+ * `typeId` — live-checked across a spread of Hoyts venues (picked by
+ * cross-referencing each venue's own advertised `features` from
+ * `/api/cinemas` — IMAX, ONYX, D-BOX, APEX, SCREENX, Atmos venues each
+ * checked directly) to find every real value actually in use, not just the
+ * ones this scraper originally modelled: `STANDARD`, `LUX`, `XTREME`,
+ * `IMAX`, `SCREENX`, `ONYX`, `DBOX`, `APEX`. The three originally missing —
+ * `SCREENX`, `ONYX`, `APEX` — were silently falling through to plain "2D"
+ * (`DBOX` too). No real `4DX` or `DOLBY` typeId turned up in this check
+ * despite `features` listing "Atmos" at some venues — Atmos is a sound
+ * format, not a distinct bookable screen type, so it doesn't show up in
+ * `typeId` the way ONYX/APEX/SCREENX/DBOX do. Kept the old best-effort
+ * `4DX`/`DOLBY` substring checks anyway in case a venue this check didn't
+ * happen to cover uses either — a miss there means "not modelled yet", not
+ * evidence the format doesn't exist at any Hoyts venue.
  */
 
 const API_BASE = "https://apim-aea.hoyts.com.au/cinemaapi-au-live/api";
@@ -42,13 +54,20 @@ function mapFormat(typeId: string | undefined): SessionFormat {
       return "Gold Class";
     case "IMAX":
       return "IMAX";
+    case "SCREENX":
+      return "ScreenX"; // confirmed live — panoramic wraparound-screen format
+    case "ONYX":
+      return "Onyx"; // confirmed live — Samsung's LED cinema screen (no projector)
+    case "APEX":
+      return "Apex"; // confirmed live — Hoyts' newest ultra-premium format
+    case "DBOX":
+      return "D-BOX"; // confirmed live — motion seating, not strictly a screen format but real and distinct
   }
-  // Not confirmed against a live Hoyts typeId (no example seen yet), but
-  // several Hoyts venues do run 4DX and Dolby Cinema screens, so a
-  // best-effort substring match is worth having rather than silently
-  // folding them into plain "2D" — same caveat as ritzRandwickScraper's
-  // mapFormat: treat a miss here as "not modelled yet", not as evidence the
-  // format doesn't exist at this cinema.
+  // Not confirmed against a live Hoyts typeId (no example seen in the
+  // venues checked), but several Hoyts venues do advertise 4DX and Dolby
+  // Cinema screens, so a best-effort substring match is worth having rather
+  // than silently folding them into plain "2D" — treat a miss here as "not
+  // modelled yet", not as evidence the format doesn't exist at this cinema.
   if (s.includes("4DX")) return "4DX";
   if (s.includes("DOLBY")) return "Dolby Cinema";
   return "2D";
