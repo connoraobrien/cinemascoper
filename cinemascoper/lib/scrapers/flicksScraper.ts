@@ -3,7 +3,7 @@ import { makeId } from "../ids";
 import { CinemaScraper } from "./types";
 import { titlesMatch, decodeHtmlText } from "./titleMatch";
 import { sydneyTodayParts, sydneyWallClockToUtc } from "./sydneyTime";
-import { resolveShadowMovie } from "./shadowMovies";
+import { resolveMovieForTitle } from "./shadowMovies";
 
 /**
  * The universal fallback: flicks.com.au (a well-known third-party AU
@@ -95,7 +95,7 @@ export const flicksScraper: CinemaScraper = {
         // lib/scrapers/types.ts.
         let movie = knownForMatch.find((m) => titlesMatch(m.title, block.title));
         if (!movie) {
-          movie = resolveShadowMovie(block.title, knownForMatch);
+          movie = await resolveMovieForTitle(block.title, knownForMatch);
           if (!knownForMatch.some((m) => m.id === movie!.id)) {
             knownForMatch.push(movie);
             shadowMovies.push(movie);

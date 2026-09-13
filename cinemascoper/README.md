@@ -35,11 +35,12 @@ of the box.
   date-grouped list, or a real month calendar — a busy day's "+N more" is
   clickable, opening every release for that day rather than cutting off at
   3; TBA titles sort to the bottom, not the top), filter by release type,
-  "Mainstream only", or "New releases only" (hides old catalogue titles
-  you've added), search by title or director, tap a tile to preview its
-  session times without committing to your watchlist, and search all of
-  TMDB (by title or director, including already-released films) to add
-  anything the discover window missed.
+  "Mainstream only", or "New releases only" (on by default — hides an old
+  title, however it entered the catalogue, so this stays what its own
+  subtitle says: upcoming releases), search by title or director, tap a
+  tile to preview its session times without committing to your watchlist,
+  and search all of TMDB (by title or director, including already-released
+  films) to add anything the discover window missed.
 - **Watchlist** — every tracked movie's sessions, with ticket links and
   trailers, browsable day by day via tabs under each movie (click a day to
   see just that day's screenings) rather than one long stacked list; filter
@@ -64,23 +65,24 @@ of the box.
 ### Shadow movies — sessions for titles CinemaScoper doesn't otherwise know
 
 Every provider now fetches a cinema's whole current lineup rather than
-asking about one movie at a time — Ritz Randwick, Dendy, and Golden Age
-Cinema & Bar joined Hoyts/Event/flicks in this once each venue's own
-site-wide "what's on" listing was reverse-engineered (see the table below).
-When one of those lists a title that doesn't match anything in the TMDB
-catalogue, the watchlist, or a manually-added movie — an old catalogue
-title getting a revival screening, a one-off special event like the Ritz's
-"Celluloid Dreams" 70mm seasons, or a retrospective like a Golden Age
-Mulholland Drive screening — CinemaScoper auto-registers a minimal
-placeholder for it (see `lib/scrapers/shadowMovies.ts`) so its sessions
-still show up in the Sessions tab, rather than being silently dropped or
-(the old failure mode for those three venues specifically) never even
-being asked about. These placeholders have no real poster/synopsis/release
-date, so they're deliberately left out of Release Radar and the
-trackable-movie lists — they're for "what's actually on", not for
-tracking, and their sessions read as re-releases by default (see
+asking about one movie at a time. When one of those lists a title that
+doesn't match anything already known, the scraper doesn't give up on it
+straight away: `resolveMovieForTitle` (`lib/scrapers/shadowMovies.ts`)
+first tries a real, single-title TMDB search for that exact title — this
+is what correctly identifies a normal, still-running release your Release
+Radar's own narrow window just doesn't happen to cover (see "Movie data —
+TMDB" above), so it gets its own real poster, synopsis, and release date
+rather than being mistaken for something obscure. Only when TMDB genuinely
+has nothing for a title — an old catalogue title with no TMDB listing at
+all, a one-off special event like the Ritz's "Celluloid Dreams" 70mm
+seasons, a community screening — does CinemaScoper fall back to a minimal
+placeholder (a "shadow movie") so its sessions still show up in the
+Sessions tab rather than being silently dropped. A placeholder has no real
+poster/synopsis/release date, so it's deliberately left out of Release
+Radar and the trackable-movie lists — it's for "what's actually on", not
+for tracking — and its sessions read as re-releases by default (see
 `isReRelease` in `lib/dateUtils.ts`) since there's no real release date to
-compare against.
+compare against, which is the correct read for a genuine shadow movie.
 
 Every real cinema integration is still capped at whatever booking window
 that venue's own site actually opens — typically about a week (Ritz,
@@ -274,7 +276,15 @@ of time in the first place, but this scraper now follows however many dates
 it actually offers (up to a generous cap) rather than an artificially tight
 one — if IMAX/Event sessions still don't reach as far out as the venue's own
 site shows, that's Event's own booking window, not a limit CinemaScoper is
-imposing.
+imposing. Those date fetches happen in small batches (6 at a time) with one
+retry for anything that fails, rather than firing every date at once —
+Connor reported Event George Street specifically only showing sessions a
+few days out despite the wider date cap, which looked consistent with some
+of ~27 simultaneous requests getting silently rate-limited/dropped; if it's
+still short after this, that'd point at Event's own booking window for that
+specific venue rather than a fetch problem (`[eventScraper]` lines in the
+deploy's logs will say which — a specific date failing after a retry vs.
+no errors logged at all).
 
 **Formats** (`SessionFormat` in `lib/types.ts`) now cover 2D, 3D, IMAX,
 VMAX, 4DX, Dolby Cinema, Gold Class, Subtitled, 70mm, and Extreme Screen.
@@ -296,30 +306,29 @@ No key set is a supported mode too — it just falls back to the demo
 catalogue, so local dev works with nothing configured.
 
 What it fetches: TMDB's `discover/movie`, filtered to `region: "AU"` and
-theatrical release types, spanning from 450 days ago to about nine months
-out — using TMDB's region-scoped `release_date.gte/lte` filters rather than
-its global `primary_release_date` ones, so this is actually Australia's own
-release slate rather than whatever's earliest in TMDB's entire catalogue —
-then one follow-up call per movie for runtime, genre names, and its
-AU-specific release date. Results are cached in memory for a few hours; a
-transient TMDB failure (or an invalid key) falls back to the demo catalogue
-rather than showing an empty Release Radar. Nothing downstream needed to
-change — every consumer only depends on the `Movie` shape in
-`lib/types.ts`, and every scraper matches sessions to a movie by title
-string (see `lib/scrapers/titleMatch.ts`), not by any TMDB-specific id — so
-a different provider is a `lib/movies.ts` swap away too.
+theatrical release types, spanning from two weeks ago (so a just-opened
+film still shows) to about nine months out — using TMDB's region-scoped
+`release_date.gte/lte` filters rather than its global `primary_release_date`
+ones, so this is actually Australia's own release slate rather than
+whatever's earliest in TMDB's entire catalogue — then one follow-up call
+per movie for runtime, genre names, and its AU-specific release date.
+Results are cached in memory for a few hours; a transient TMDB failure (or
+an invalid key) falls back to the demo catalogue rather than showing an
+empty Release Radar. Nothing downstream needed to change — every consumer
+only depends on the `Movie` shape in `lib/types.ts`, and every scraper
+matches sessions to a movie by title string (see
+`lib/scrapers/titleMatch.ts`), not by any TMDB-specific id — so a
+different provider is a `lib/movies.ts` swap away too.
 
-> The 450-day lookback matches `RE_RELEASE_THRESHOLD_DAYS` in
-> `lib/dateUtils.ts` on purpose, not by coincidence — see the doc comment
-> on `LOOKBACK_DAYS` in `lib/movies.ts`. A too-narrow lookback (14 days,
-> before this fix) meant a real, recently-released movie that a full-listing
-> cinema scraper (Ritz/Dendy/Golden Age) found in its lineup could fall
-> *entirely* out of the known-movies catalogue and get treated as an
-> unrecognised "shadow" title with no release date at all — which reads as
-> a re-release regardless of the threshold, since there's nothing to
-> compare against. Widening this is what actually fixes that (the
-> re-release *threshold* itself was already correct), not a change to the
-> threshold value.
+> This bulk fetch is deliberately narrow — it's what fills Release Radar,
+> and widening it to "cover more of a normal theatrical run" was tried and
+> reverted after it flooded Release Radar with old titles (see the
+> "Shadow movies" section below for the actual fix to the problem that was
+> trying to solve). A cinema scraper that runs into a real, recently-
+> released movie this narrow window doesn't cover does a separate,
+> *targeted* single-title lookup instead — `findTmdbMovieByTitle`, also in
+> this file — which doesn't affect what Release Radar shows in bulk at
+> all.
 
 > This wiring hasn't been exercised against a real TMDB response — this
 > sandbox has no outbound access to api.themoviedb.org either — so it's

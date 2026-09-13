@@ -3,7 +3,7 @@ import { makeId } from "../ids";
 import { CinemaScraper } from "./types";
 import { titlesMatch } from "./titleMatch";
 import { sydneyIsoWallClockToUtc } from "./sydneyTime";
-import { resolveShadowMovie } from "./shadowMovies";
+import { resolveMovieForTitle } from "./shadowMovies";
 
 /**
  * Event Cinemas (this also covers IMAX Sydney — it's its own Event
@@ -40,6 +40,24 @@ import { resolveShadowMovie } from "./shadowMovies";
 // that short — it's now generous enough to just take everything Event hands
 // back, up to a sane ceiling on per-cinema fetches in one poll tick.
 const MAX_DATES_PER_POLL = 28;
+
+// Connor separately reported Event George Street specifically only showing
+// sessions out to a few days ahead ("this coming Friday or whatever") even
+// though `MAX_DATES_PER_POLL` above should allow much further. The likely
+// cause: firing up to 27 simultaneous GET requests at Event's own endpoint
+// for one cinema (`Promise.all` over every date at once, the previous
+// shape here) is aggressive enough to plausibly get some of them
+// rate-limited/dropped — and a failed date fetch was silently skipped with
+// no retry and no log line, which would look exactly like "only the
+// nearest few days came back" without anything actually being wrong with
+// the date list itself. Fetching in smaller batches, with one retry for
+// anything that fails, is meant to rule that out (or fix it, if that's
+// what it was) without needing live access to Event's site to confirm —
+// this sandbox has none. If sessions are still capped short after this,
+// that'd genuinely point at Event's own booking window for that specific
+// venue rather than a fetch problem here.
+const DATE_FETCH_BATCH_SIZE = 6;
+const DATE_FETCH_RETRY_DELAY_MS = 400;
 
 function mapFormat(screenTypeName: string | undefined): SessionFormat {
   const s = (screenTypeName ?? "").toLowerCase();
@@ -98,13 +116,40 @@ async function fetchDay(cinemaId: string, date?: string): Promise<GetSessionsRes
   }
 }
 
+/** `fetchDay` plus one retry after a short pause — see the doc comment on `DATE_FETCH_BATCH_SIZE`
+ * above for why a failed/unsuccessful response here is treated as "probably transient" rather than
+ * "this date genuinely has nothing", and logs (rather than silently drops) a date that still fails
+ * after the retry, so a real ongoing gap is at least visible in the deploy's logs. */
+async function fetchDayWithRetry(cinemaId: string, date: string | undefined, label: string): Promise<GetSessionsResponse | null> {
+  const first = await fetchDay(cinemaId, date);
+  if (first && first.Success) return first;
+
+  await new Promise((resolve) => setTimeout(resolve, DATE_FETCH_RETRY_DELAY_MS));
+  const retry = await fetchDay(cinemaId, date);
+  if (!retry || !retry.Success) {
+    console.error(`[eventScraper] cinema ${cinemaId}: gave up on ${label} after a retry`);
+  }
+  return retry;
+}
+
+/** Fetches every date in `dates` for `cinemaId`, `DATE_FETCH_BATCH_SIZE` at a time rather than all
+ * at once — see the doc comment on `DATE_FETCH_BATCH_SIZE` above. */
+async function fetchDaysInBatches(cinemaId: string, dates: string[]): Promise<(GetSessionsResponse | null)[]> {
+  const out: (GetSessionsResponse | null)[] = [];
+  for (let i = 0; i < dates.length; i += DATE_FETCH_BATCH_SIZE) {
+    const batch = dates.slice(i, i + DATE_FETCH_BATCH_SIZE);
+    out.push(...(await Promise.all(batch.map((d) => fetchDayWithRetry(cinemaId, d, d)))));
+  }
+  return out;
+}
+
 export const eventScraper: CinemaScraper = {
   name: "Event Cinemas (eventcinemas.com.au)",
 
   async discoverNewSessions({ cinema, allKnownMovies, existingSessions, now }) {
     if (!cinema.providerId) return { sessions: [], shadowMovies: [] };
 
-    const first = await fetchDay(cinema.providerId);
+    const first = await fetchDayWithRetry(cinema.providerId, undefined, "today");
     if (!first || !first.Success) return { sessions: [], shadowMovies: [] };
 
     const dates = [first.Data.SelectedDate, ...first.Data.Dates.filter((d) => d !== first.Data.SelectedDate)].slice(
@@ -112,7 +157,7 @@ export const eventScraper: CinemaScraper = {
       MAX_DATES_PER_POLL
     );
 
-    const responses = [first, ...(await Promise.all(dates.slice(1).map((d) => fetchDay(cinema.providerId, d))))];
+    const responses = [first, ...(await fetchDaysInBatches(cinema.providerId, dates.slice(1)))];
 
     const discovered: Session[] = [];
     const knownForMatch = [...allKnownMovies];
@@ -127,7 +172,7 @@ export const eventScraper: CinemaScraper = {
         // lib/scrapers/types.ts.
         let movie = knownForMatch.find((m) => titlesMatch(m.title, eventMovie.Name));
         if (!movie) {
-          movie = resolveShadowMovie(eventMovie.Name, knownForMatch);
+          movie = await resolveMovieForTitle(eventMovie.Name, knownForMatch);
           if (!knownForMatch.some((m) => m.id === movie!.id)) {
             knownForMatch.push(movie);
             shadowMovies.push(movie);

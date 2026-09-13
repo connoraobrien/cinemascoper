@@ -2,7 +2,7 @@ import { Movie, Session, SessionFormat } from "../types";
 import { makeId } from "../ids";
 import { CinemaScraper } from "./types";
 import { titlesMatch } from "./titleMatch";
-import { resolveShadowMovie } from "./shadowMovies";
+import { resolveMovieForTitle } from "./shadowMovies";
 
 /**
  * Hoyts. Reverse-engineered from what hoyts.com.au's own cinema pages call
@@ -102,11 +102,12 @@ export const hoytsScraper: CinemaScraper = {
       // Match against everything CinemaScoper knows about, not just this
       // tick's near-term candidates — an older, already-released title
       // Hoyts is re-screening is still "known" if it's in TMDB or was
-      // manually added; only a genuinely unrecognised title falls through
-      // to a shadow movie (see the doc comment on `resolveShadowMovie`).
+      // manually added; a title that's merely unrecognised *here* still
+      // gets a real, single-title TMDB lookup before falling through to a
+      // shadow placeholder (see the doc comment on `resolveMovieForTitle`).
       let movie = knownForMatch.find((m) => titlesMatch(m.title, hoytsTitle));
       if (!movie) {
-        movie = resolveShadowMovie(hoytsTitle, knownForMatch);
+        movie = await resolveMovieForTitle(hoytsTitle, knownForMatch);
         if (!knownForMatch.some((m) => m.id === movie!.id)) {
           knownForMatch.push(movie);
           shadowMovies.push(movie);

@@ -2,7 +2,7 @@ import { Movie, Session } from "../types";
 import { makeId } from "../ids";
 import { CinemaScraper } from "./types";
 import { titlesMatch } from "./titleMatch";
-import { resolveShadowMovie } from "./shadowMovies";
+import { resolveMovieForTitle } from "./shadowMovies";
 
 /**
  * Dendy. Every venue runs on its own subdomain (newtown.dendy.com.au,
@@ -196,7 +196,7 @@ export const dendyScraper: CinemaScraper = {
       // lib/scrapers/types.ts.
       let movie = knownForMatch.find((m) => titlesMatch(m.title, dendyMovie.name));
       if (!movie) {
-        movie = resolveShadowMovie(dendyMovie.name, knownForMatch);
+        movie = await resolveMovieForTitle(dendyMovie.name, knownForMatch);
         if (!knownForMatch.some((m) => m.id === movie!.id)) {
           knownForMatch.push(movie);
           shadowMovies.push(movie);

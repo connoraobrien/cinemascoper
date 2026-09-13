@@ -31,13 +31,17 @@ export interface CinemaScraper {
    * `allKnownMovies` is every movie CinemaScoper knows about at all (the
    * discover window, manually-added, watchlisted, and shadow movies from
    * earlier polls) — wider than `candidateMovies` (which is scoped to
-   * "worth asking about this poll tick", see `pollEngine.ts`). The three
-   * scrapers that see a whole cinema's own lineup rather than asking about
-   * one movie at a time (Hoyts, Event, flicks) match against this wider
-   * list first — so an older, already-released title that's merely outside
-   * the normal candidate window (but still known) still gets attributed to
-   * its real Movie record — and only fall back to creating a shadow movie
-   * for a title that's genuinely unrecognised.
+   * "worth asking about this poll tick", see `pollEngine.ts`). Every real
+   * scraper now sees a whole cinema's own lineup rather than asking about
+   * one movie at a time, and matches against this wider list first — so an
+   * older, already-released title that's merely outside the normal
+   * candidate window (but still known) still gets attributed to its real
+   * Movie record. A title that doesn't match anything in `allKnownMovies`
+   * either isn't given up on immediately: see `resolveMovieForTitle` in
+   * `lib/scrapers/shadowMovies.ts`, which every real scraper calls instead
+   * of creating a shadow movie directly — it tries a real, single-title
+   * TMDB lookup first, and only falls back to an unrecognised placeholder
+   * if that genuinely turns up nothing.
    */
   discoverNewSessions(args: {
     cinema: Cinema;

@@ -2,7 +2,7 @@ import { Movie, Session } from "../types";
 import { makeId } from "../ids";
 import { CinemaScraper } from "./types";
 import { titlesMatch, decodeHtmlText } from "./titleMatch";
-import { resolveShadowMovie } from "./shadowMovies";
+import { resolveMovieForTitle } from "./shadowMovies";
 import { inferYear, monthIndexFromAbbrev, sydneyWallClockToUtc } from "./sydneyTime";
 
 /**
@@ -112,7 +112,7 @@ export const goldenAgeScraper: CinemaScraper = {
       // lib/scrapers/types.ts.
       let movie = knownForMatch.find((m) => titlesMatch(m.title, entry.title));
       if (!movie) {
-        movie = resolveShadowMovie(entry.title, knownForMatch);
+        movie = await resolveMovieForTitle(entry.title, knownForMatch);
         if (!knownForMatch.some((m) => m.id === movie!.id)) {
           knownForMatch.push(movie);
           shadowMovies.push(movie);

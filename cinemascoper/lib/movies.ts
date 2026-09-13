@@ -1,5 +1,6 @@
 import { Movie, ReleaseType } from "./types";
 import { SEED_MOVIES } from "./seedMovies";
+import { titlesMatch } from "./scrapers/titleMatch";
 
 /**
  * Real movie data, from TMDB — replaces the invented `SEED_MOVIES` demo
@@ -56,22 +57,32 @@ const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500";
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const MAX_MOVIES = 80; // bounds discover pages fetched and detail lookups made
 const MAX_PAGES = 6; // TMDB returns 20 results/page
-// Matches RE_RELEASE_THRESHOLD_DAYS in lib/dateUtils.ts, deliberately: this window is what decides
-// whether a movie has a *known* AU release date at all, which matters well beyond just how far back
-// the Release Radar scrolls. A full-listing cinema scraper (Ritz/Dendy/Golden Age) reports every film
-// in its current lineup, not just watchlisted ones — including a normal, still-running theatrical
-// release from a few months back. If that title isn't in this discover window, it can't be matched to
-// its real TMDB record and gets treated as an unrecognised "shadow" movie with no release date at all
-// (see lib/scrapers/shadowMovies.ts) — and `isReRelease()` treats *any* movie with no known release
-// date as a re-release, regardless of the date-math threshold. A too-small LOOKBACK_DAYS (14, before
-// this fix) was the actual cause of recently-released real films like "Tony" and "The Odyssey" showing
-// up tagged "Re-release": not the threshold itself, but real AU release dates falling out of the
-// catalogue entirely. Widening this to match the re-release threshold means "does this count as a
-// re-release" and "do we know this movie's real release date" cover the same span. The existing
-// popularity-based sort (see the module doc comment above) keeps this from being crowded out by
-// obscure old titles; the separate "New releases only" filter in ReleasesTab handles decluttering the
-// Release Radar's *view*, so this doesn't also need to stay narrow for that reason.
-const LOOKBACK_DAYS = 450;
+// Deliberately narrow (just "so a movie that just opened is still visible",
+// not "wide enough to cover a normal theatrical run") — this is the bulk
+// discover fetch that becomes `movies` in `AppState`, i.e. what actually
+// fills the Release Radar tab. It briefly got widened to 450 (matching
+// `RE_RELEASE_THRESHOLD_DAYS`) to fix full-listing cinema scrapers
+// (Ritz/Dendy/Golden Age, and really all six providers) reporting a normal,
+// still-running release like "Tony" or "The Odyssey" as an unrecognised
+// "shadow" movie with no release date (see the doc comment on
+// `resolveMovieForTitle` in `lib/scrapers/shadowMovies.ts` for why a blank
+// release date always reads as a re-release) — but widening the *bulk*
+// catalogue fetch to do that had a real side effect Connor reported
+// immediately: Release Radar filled up with hundreds of old, already-
+// released titles (anything TMDB's AU release slate had in the last 450
+// days, not just what a cinema was actually showing), since the "New
+// releases only" filter in `ReleasesTab.tsx` defaults to off and was never
+// meant to tame an automatically-bloated catalogue — it existed for the
+// rare, deliberately-added old title from the "search all of TMDB" flow.
+// The actual fix for the shadow-movie problem now lives in
+// `resolveMovieForTitle`/`findTmdbMovieByTitle` instead: a *targeted*,
+// single-title TMDB search for whatever specific title a scraper couldn't
+// match, rather than trying to pre-fetch every possibly-relevant movie in
+// bulk. That's both more accurate (an exact title search beats hoping a
+// popularity-ranked discover page happened to include the right movie) and
+// keeps this bulk fetch back to its original, narrow, "what's genuinely
+// upcoming" purpose.
+const LOOKBACK_DAYS = 14;
 const LOOKAHEAD_DAYS = 270; // ~9 months of upcoming releases — wider than a typical "coming soon" page on
 // purpose, since a single-cinema/limited release can be locked in that far out and Connor would
 // rather scroll past more titles than miss one; the "Mainstream releases" filter (popularity-based,
@@ -356,6 +367,41 @@ export async function fetchTmdbMovieById(tmdbId: number): Promise<Movie | null> 
   const apiKey = process.env.TMDB_API_KEY;
   if (!apiKey) return null;
   const detail = await tmdbGet<TmdbDetail>(`/movie/${tmdbId}`, apiKey, { append_to_response: DETAIL_APPEND });
+  if (!detail) return null;
+  return mapDetailToMovie(detail);
+}
+
+/**
+ * The other caller of a single-title TMDB lookup — `resolveMovieForTitle`
+ * in `lib/scrapers/shadowMovies.ts` calls this for a title a cinema
+ * scraper couldn't match against the known-movies catalogue, *before*
+ * falling back to an unrecognised placeholder ("shadow movie"). Unlike
+ * `searchTmdbMovies` (which returns a list for a person to pick from), this
+ * picks one result itself: whichever of `/search/movie`'s results actually
+ * title-matches (see `titlesMatch` — loose, punctuation/case-insensitive,
+ * tolerant of a subtitle) the title we're looking for, falling back to
+ * TMDB's own top relevance hit only if none of them do (a short/common
+ * title like "Tony" could otherwise rank a same-named-but-different film
+ * above the real one). Returns `null` on no key, no results, or no detail —
+ * every caller treats that as "this genuinely isn't a movie CinemaScoper
+ * can identify", not an error.
+ */
+export async function findTmdbMovieByTitle(rawTitle: string): Promise<Movie | null> {
+  const apiKey = process.env.TMDB_API_KEY;
+  const q = rawTitle.trim();
+  if (!apiKey || !q) return null;
+
+  const data = await tmdbGet<{ results: TmdbDiscoverResult[] }>("/search/movie", apiKey, {
+    query: q,
+    include_adult: "false",
+    region: "AU",
+  });
+  const results = data?.results ?? [];
+  if (results.length === 0) return null;
+
+  const best = results.find((r) => titlesMatch(r.title, q)) ?? results[0];
+
+  const detail = await tmdbGet<TmdbDetail>(`/movie/${best.id}`, apiKey, { append_to_response: DETAIL_APPEND });
   if (!detail) return null;
   return mapDetailToMovie(detail);
 }

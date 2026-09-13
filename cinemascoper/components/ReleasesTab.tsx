@@ -12,12 +12,17 @@ import { MAINSTREAM_POPULARITY_THRESHOLD } from "@/lib/movies";
 const FILTERS: ("All" | ReleaseType)[] = ["All", "Standard Theatrical", "Limited Release", "Film Festival"];
 type ViewMode = "grid" | "byDate" | "calendar";
 
-// "Show only new releases" — hides a watchlisted (or manually-added) movie
-// that released more than this long ago, e.g. an old catalogue title added
-// via the "search all of TMDB" flow so a cinema could be polled for a
-// re-release of it. Kept out of Release Radar's day-to-day view by default
-// intent (the toggle below is off unless Connor turns it on) so old titles
-// don't clutter what's meant to be upcoming releases.
+// "Show only new releases" — hides a movie that released more than this
+// long ago: a watchlisted or manually-added old catalogue title (e.g. from
+// the "search all of TMDB" flow, so a cinema could be polled for a
+// re-release of it), or a real movie a cinema scraper resolved via a
+// single-title TMDB lookup that just happens to be an old one (see
+// `resolveMovieForTitle` in `lib/scrapers/shadowMovies.ts`). Defaults to
+// **on** — Connor can turn it off to browse everything — so Release Radar
+// stays what its own subtitle says it is ("Upcoming theatrical releases")
+// regardless of how an old title entered the catalogue, rather than
+// depending on the catalogue itself always staying narrow to keep old
+// titles out.
 const OLD_RELEASE_DAYS = 365;
 
 /** Places movies with no release date (TBA) after everything else, rather than sorting them first
@@ -66,7 +71,7 @@ export function ReleasesTab({
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("All");
   const [view, setView] = useState<ViewMode>("grid");
   const [mainstreamOnly, setMainstreamOnly] = useState(false);
-  const [newOnly, setNewOnly] = useState(false);
+  const [newOnly, setNewOnly] = useState(true);
   const [search, setSearch] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
 

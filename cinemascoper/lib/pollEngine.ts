@@ -2,6 +2,7 @@ import { DB, Movie, Cinema, Session, AppNotification } from "./types";
 import { getScraperForProvider } from "./scrapers";
 import { matchRulesForSession } from "./matching";
 import { makeId } from "./ids";
+import { titlesMatch } from "./scrapers/titleMatch";
 
 const CANDIDATE_WINDOW_MIN_DAYS = -14; // still show sessions for recently-released films
 const CANDIDATE_WINDOW_MAX_DAYS = 45; // chains rarely open tickets further out than this
@@ -163,6 +164,53 @@ export async function scrapeAllCinemas(db: DB, allMovies: Movie[], now: Date): P
 }
 
 /**
+ * A scraper's `shadowMovies` can now contain either a genuine unrecognised
+ * placeholder OR a real movie `resolveMovieForTitle` just matched via a
+ * single-title TMDB lookup (see `lib/scrapers/shadowMovies.ts`) — including
+ * a title that already had an *old* placeholder sitting in `db.manualMovies`
+ * from before that title could be matched (exactly what happened with
+ * "Tony"/"The Odyssey" before the AU-release-date fix). The new real movie
+ * gets a different id (`tmdb-<id>`) than the old placeholder
+ * (`scraped-<hash>`), so without this migration step, every
+ * session/notification already recorded against the old placeholder would
+ * stay stuck on it forever — still reading as a re-release, since a
+ * placeholder has no real release date — and a *new* session for the same
+ * real-world screening would look like an unrelated extra session rather
+ * than the same one (the `alreadyKnown` dedup below keys off `movieId`
+ * too), i.e. a visible duplicate. This finds any existing placeholder
+ * whose title matches a freshly-resolved real movie, moves every session
+ * and notification pointing at the old id over to the new one, and drops
+ * the now-superseded placeholder. A no-op for a genuine placeholder
+ * (nothing to upgrade *to*) or a real movie with no stale placeholder to
+ * replace (the common case, once this catches up).
+ */
+function migrateUpgradedShadowMovie(db: DB, resolvedMovie: Movie): void {
+  if (resolvedMovie.source === "scraped") return;
+
+  const stalePlaceholder = db.manualMovies.find(
+    (m) => m.source === "scraped" && m.id !== resolvedMovie.id && titlesMatch(m.title, resolvedMovie.title)
+  );
+  if (!stalePlaceholder) return;
+
+  const oldId = stalePlaceholder.id;
+  const newId = resolvedMovie.id;
+
+  for (const s of db.sessions) {
+    if (s.movieId === oldId) s.movieId = newId;
+  }
+  for (const n of db.notifications) {
+    if (n.movieId === oldId) n.movieId = newId;
+  }
+  if (db.hiddenMovieIds.includes(oldId) && !db.hiddenMovieIds.includes(newId)) {
+    db.hiddenMovieIds.push(newId);
+  }
+  db.hiddenMovieIds = db.hiddenMovieIds.filter((id) => id !== oldId);
+  db.manualMovies = db.manualMovies.filter((m) => m.id !== oldId);
+
+  console.log(`[pollEngine] "${resolvedMovie.title}": migrated from shadow placeholder ${oldId} to real movie ${newId}`);
+}
+
+/**
  * The fast part of a poll tick: takes whatever `scrapeAllCinemas` already
  * found (no network calls here) and writes it into `db` — meant to run
  * inside a single short `withDB` call, against a *freshly re-loaded* `db`
@@ -187,6 +235,7 @@ export function commitPollResults(
   const knownShadowIds = new Set(db.manualMovies.map((m) => m.id));
   for (const r of results) {
     for (const shadow of r.shadowMovies) {
+      migrateUpgradedShadowMovie(db, shadow);
       if (knownShadowIds.has(shadow.id)) continue;
       knownShadowIds.add(shadow.id);
       db.manualMovies.push(shadow);

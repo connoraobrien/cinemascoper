@@ -2,7 +2,7 @@ import { Movie, Session, SessionFormat } from "../types";
 import { makeId } from "../ids";
 import { CinemaScraper } from "./types";
 import { titlesMatch, decodeHtmlText } from "./titleMatch";
-import { resolveShadowMovie } from "./shadowMovies";
+import { resolveMovieForTitle } from "./shadowMovies";
 import { sydneyTodayParts, sydneyWallClockToUtc, sydneyWeekdayName } from "./sydneyTime";
 
 /**
@@ -184,7 +184,7 @@ export const ritzRandwickScraper: CinemaScraper = {
         // surface correctly instead of only ever checking candidateMovies.
         let movie = knownForMatch.find((m) => titlesMatch(m.title, row.name));
         if (!movie) {
-          movie = resolveShadowMovie(row.name, knownForMatch);
+          movie = await resolveMovieForTitle(row.name, knownForMatch);
           if (!knownForMatch.some((m) => m.id === movie!.id)) {
             knownForMatch.push(movie);
             shadowMovies.push(movie);
